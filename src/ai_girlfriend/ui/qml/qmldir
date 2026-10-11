@@ -1,0 +1,7 @@
+singleton Theme 1.0 Theme.qml
+ChatView 1.0 ChatView.qml
+MessageBubble 1.0 MessageBubble.qml
+Portrait 1.0 Portrait.qml
+SettingsView 1.0 SettingsView.qml
+ThemePicker 1.0 ThemePicker.qml
+CharacterPicker 1.0 CharacterPicker.qml
