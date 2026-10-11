@@ -99,6 +99,30 @@ async def test_chat_persists_exchange_and_reuses_history():
     assert [m.content for m in stored] == ["first", "re:first", "second", "re:second"]
 
 
+async def test_chat_creates_chat_when_id_is_missing():
+    """A message without a chat_id must create the chat row (FK-safe)."""
+    provider = FakeLLMProvider(
+        response=json.dumps({"text": "Hi!", "expression": "neutral"})
+    )
+    pipeline = await build_pipeline(provider)
+
+    response = await pipeline.chat("hello")  # no chat_id
+
+    assert response.chat_id is not None
+    stored = await pipeline.memory_manager.database.get_recent_messages(
+        response.chat_id, limit=10
+    )
+    assert [m.content for m in stored] == ["hello", "Hi!"]
+
+
+async def test_stream_chat_creates_chat_when_id_is_missing():
+    provider = FakeLLMProvider(chunks=["Hel", "lo"])
+    pipeline = await build_pipeline(provider)
+
+    events = [e async for e in pipeline.stream_chat("hi")]
+    assert isinstance(events[-1], Done)
+
+
 async def test_chat_does_not_save_on_generation_failure():
     provider = FakeLLMProvider(error=RuntimeError("boom"))
     pipeline = await build_pipeline(provider)

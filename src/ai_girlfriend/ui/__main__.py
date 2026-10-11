@@ -1,47 +1,12 @@
-"""DEVELOPMENT FILE WITH INVOKE TASKS"""
+"""Entry point: ``python -m src.ai_girlfriend.ui [--demo]``.
 
-from invoke import task
+``--demo`` runs an offline fake core so the UI can be exercised without the real
+pipeline. Without it, the real ``CompositionRoot`` is built from ``config.json``.
+"""
 
+import sys
 
-@task
-def format(c):
-    """Run code formatters (Ruff format and lint auto-fixes)."""
-    print("[FIXING]: Running code formatting and auto-fixes...")
-    c.run("poetry run ruff format .")
-    c.run("poetry run ruff check . --fix")
+from src.ai_girlfriend.ui.app import run
 
-
-@task
-def check(c):
-    """Check code for linting and formatting issues without modifying files."""
-    print("[SEARCHING]: Checking lint rules...")
-    c.run("poetry run ruff check .")
-    print("[SEARCHING]: Checking code formatting rules...")
-    c.run("poetry run ruff format . --check")
-
-
-@task
-def test(c):
-    """Run the unit test suite using pytest."""
-    print("[EXECUTING]: Running unit tests...")
-    c.run("poetry run pytest")
-
-
-@task
-def demo(c):
-    """Run the desktop QML UI against the offline demo core."""
-    print("[EXECUTING]: Launching the QML UI (demo core)...")
-    c.run("poetry run python -m src.ai_girlfriend.ui --demo")
-
-
-@task
-def ui(c):
-    """Run the desktop QML UI against the real pipeline (reads config.json)."""
-    print("[EXECUTING]: Launching the QML UI...")
-    c.run("poetry run python -m src.ai_girlfriend.ui")
-
-
-@task(pre=[check, test])
-def ci(c):
-    """Run all quality gates (Lint check + Tests) for CI/CD pipelines."""
-    print("[SUCCESS]: All quality checks passed successfully!")
+if __name__ == "__main__":
+    sys.exit(run(demo="--demo" in sys.argv))

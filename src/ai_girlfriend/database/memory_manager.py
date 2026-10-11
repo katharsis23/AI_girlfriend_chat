@@ -21,6 +21,15 @@ class MemoryManager:
         self.database = database
         self.context_provider = context_provider
 
+    async def create_chat(self) -> UUID:
+        """Create a new chat and return its identifier.
+
+        Called by the pipeline when a message arrives without a ``chat_id`` so
+        the row referenced by the messages' foreign key exists (see spec,
+        section 6.2).
+        """
+        return await self.database.create_chat()
+
     async def build_context(
         self, chat_id: UUID, user_message: Message
     ) -> ContextBundle:

@@ -4,6 +4,26 @@ from __future__ import annotations
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
+# The full set of color roles every theme (built-in or custom) must define.
+REQUIRED_TOKENS = [
+    "background",
+    "surface",
+    "surfaceVariant",
+    "primary",
+    "onPrimary",
+    "secondary",
+    "tertiary",
+    "onSurface",
+    "onSurfaceVariant",
+    "outline",
+    "error",
+    "onError",
+    "userBubble",
+    "onUserBubble",
+    "assistantBubble",
+    "onAssistantBubble",
+]
+
 THEMES: dict[str, dict] = {
     "rose": {
         "name": "Rose",
@@ -76,21 +96,39 @@ DEFAULT_THEME = "rose"
 
 
 class ThemeController(QObject):
-    """Holds the active theme; projected into QML by the `Theme` singleton."""
+    """Holds the active theme and the registry of available themes.
+
+    Built-in themes come from :data:`THEMES`; user-defined themes are merged on
+    top at construction time and persisted through an optional ``ThemeStore``.
+    """
 
     themeChanged = Signal()
+    themesChanged = Signal()
 
-    def __init__(self, theme_id: str = DEFAULT_THEME, parent=None):
+    def __init__(self, theme_id: str = DEFAULT_THEME, store=None, parent=None):
         super().__init__(parent)
-        self._id = theme_id if theme_id in THEMES else DEFAULT_THEME
+        self._store = store
+        self._themes: dict[str, dict] = dict(THEMES)
+        if self._store is not None:
+            self._themes.update(self._store.load())
+        self._id = theme_id if theme_id in self._themes else DEFAULT_THEME
+
+    @property
+    def themes(self) -> dict[str, dict]:
+        """All available themes (built-in + custom)."""
+        return self._themes
+
+    @property
+    def theme_id(self) -> str:
+        return self._id
 
     @Property("QVariantMap", notify=themeChanged)
     def colors(self):
-        return THEMES[self._id]["colors"]
+        return self._themes[self._id]["colors"]
 
     @Property(bool, notify=themeChanged)
     def isDark(self):
-        return THEMES[self._id]["dark"]
+        return self._themes[self._id]["dark"]
 
     @Property(str, notify=themeChanged)
     def themeId(self):
@@ -98,6 +136,46 @@ class ThemeController(QObject):
 
     @Slot(str)
     def setTheme(self, theme_id: str) -> None:
-        if theme_id in THEMES and theme_id != self._id:
+        if theme_id in self._themes and theme_id != self._id:
             self._id = theme_id
             self.themeChanged.emit()
+
+    @Slot(str, str, bool, "QVariantMap", result=str)
+    def saveCustomTheme(self, theme_id: str, name: str, dark: bool, colors) -> str:
+        """Create or update a custom theme; return the id, or '' on error."""
+        from src.ai_girlfriend.ui.themes_store import ThemeStore, ThemeStoreError
+
+        if theme_id in THEMES:
+            return ""  # never overwrite a built-in theme
+        try:
+            normalized = ThemeStore.validate(theme_id, name, dict(colors))
+        except (ThemeStoreError, TypeError, ValueError):
+            return ""
+        self._themes[theme_id] = {
+            "name": normalized["name"],
+            "dark": bool(dark),
+            "colors": normalized["colors"],
+            "custom": True,
+        }
+        self._persist()
+        self.themesChanged.emit()
+        self.setTheme(theme_id)
+        return theme_id
+
+    @Slot(str, result=bool)
+    def deleteCustomTheme(self, theme_id: str) -> bool:
+        """Delete a custom theme; returns ``True`` if it existed."""
+        theme = self._themes.get(theme_id)
+        if theme is None or not theme.get("custom"):
+            return False
+        del self._themes[theme_id]
+        if self._id == theme_id:
+            self._id = DEFAULT_THEME
+            self.themeChanged.emit()
+        self._persist()
+        self.themesChanged.emit()
+        return True
+
+    def _persist(self) -> None:
+        if self._store is not None:
+            self._store.save(self._themes)

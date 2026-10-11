@@ -85,7 +85,7 @@ class GfPipeline:
         if not self._initialized:
             await self.init()
 
-        conversation_id = chat_id or uuid4()
+        conversation_id = await self._ensure_chat(chat_id)
         user_message = Message(
             conversation_id=conversation_id, role=Role.USER, content=message
         )
@@ -103,7 +103,9 @@ class GfPipeline:
         )
         await self.memory_manager.record_exchange(user_message, bot_message)
 
-        return CharacterResponse(text=text, expression=expression)
+        return CharacterResponse(
+            text=text, expression=expression, chat_id=conversation_id
+        )
 
     async def stream_chat(
         self, message: str, chat_id: UUID | None = None
@@ -116,11 +118,10 @@ class GfPipeline:
         if not self._initialized:
             await self.init()
 
-        conversation_id = chat_id or uuid4()
+        conversation_id = await self._ensure_chat(chat_id)
         user_message = Message(
             conversation_id=conversation_id, role=Role.USER, content=message
         )
-
         bundle = await self.memory_manager.build_context(conversation_id, user_message)
         request = self._build_request([*bundle.messages, user_message])
 
@@ -141,6 +142,17 @@ class GfPipeline:
                 yield event
             elif isinstance(event, Error):
                 yield event
+
+    async def _ensure_chat(self, chat_id: UUID | None) -> UUID:
+        """Return an existing chat id, or create a new chat row.
+
+        A ``None`` chat id means "first message of a new conversation". We must
+        create the ``chats`` row before saving messages, otherwise the messages'
+        foreign key (``chat_id -> chats.id``) fails.
+        """
+        if chat_id is not None:
+            return chat_id
+        return await self.memory_manager.create_chat()
 
     async def close(self) -> None:
         """Release resources held by the pipeline."""

@@ -20,7 +20,7 @@ Page {
         clip: true
         spacing: 12
         topMargin: 16
-        bottomMargin: 16
+        bottomMargin: 96
         model: settingsBackend.themes
 
         delegate: Item {
@@ -31,6 +31,7 @@ Page {
             readonly property bool isActive: settingsBackend.currentTheme === modelData
 
             AbstractButton {
+                id: card
                 width: Math.min(list.width - 32, 640)
                 height: parent.height
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -66,7 +67,22 @@ Page {
                         Layout.fillWidth: true
                         spacing: 2
                         Label { text: item.info.name; color: Theme.onSurface; font.pixelSize: Theme.fontSizeM + 1; font.weight: Font.Medium }
-                        Label { text: item.info.dark ? qsTr("Dark") : qsTr("Light"); color: Theme.onSurfaceVariant; font.pixelSize: Theme.fontSizeS + 1 }
+                        Label {
+                            text: (item.info.dark ? qsTr("Dark") : qsTr("Light"))
+                                  + (item.info.custom ? " · " + qsTr("Custom") : "")
+                            color: Theme.onSurfaceVariant; font.pixelSize: Theme.fontSizeS + 1
+                        }
+                    }
+                    // Edit button for custom themes only.
+                    IconButton {
+                        visible: item.info.custom
+                        glyph: "✎"
+                        fg: Theme.onSurfaceVariant
+                        accessibleName: qsTr("Edit theme")
+                        implicitWidth: 36
+                        implicitHeight: 36
+                        onClicked: view.StackView.view.push(Qt.resolvedUrl("ThemeEditor.qml"),
+                                                            { themeId: modelData })
                     }
                     Rectangle {
                         Layout.preferredWidth: 28; Layout.preferredHeight: 28
@@ -80,6 +96,22 @@ Page {
                     }
                 }
             }
+        }
+    }
+
+    // Floating action button: create a new custom theme.
+    Rectangle {
+        width: 56; height: 56; radius: 28
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 24
+        color: Theme.primary
+        Accessible.role: Accessible.Button
+        Accessible.name: qsTr("Create theme")
+        Text { anchors.centerIn: parent; text: "+"; color: Theme.onPrimary; font.pixelSize: 30; font.bold: true }
+        MouseArea {
+            anchors.fill: parent
+            onClicked: view.StackView.view.push(Qt.resolvedUrl("ThemeEditor.qml"))
         }
     }
 }

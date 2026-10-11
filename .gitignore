@@ -10,3 +10,8 @@ __pycache_/
 # Local runtime configuration (may contain API keys). Commit config.example.json
 # instead and copy it to config.json for local development.
 config.json
+
+
+ai_girlfriend.db
+characters.json
+themes.json

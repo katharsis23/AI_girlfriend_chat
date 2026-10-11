@@ -65,14 +65,51 @@ Item {
             anchors.fill: parent
             transformOrigin: Item.Center
 
-            Image {
+            // Crop the photo into a circle: fill the whole avatar and cut off
+            // the overflow, clipped by a round mask so it reads as an avatar.
+            Item {
+                id: imageClip
                 anchors.fill: parent
                 anchors.margins: root.width * 0.08
-                source: root.shownSource
-                visible: root.shownSource !== "" && status === Image.Ready
-                fillMode: Image.PreserveAspectFit
-                asynchronous: true
-                smooth: true
+                visible: root.shownSource !== "" && image.status === Image.Ready
+                layer.enabled: true
+
+                // Round mask used by layer to clip the image to a circle.
+                Rectangle {
+                    id: circleMask
+                    anchors.fill: parent
+                    radius: width / 2
+                    color: "white"
+                    visible: false
+                    layer.enabled: true
+                }
+
+                Image {
+                    id: image
+                    anchors.fill: parent
+                    source: root.shownSource
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    smooth: true
+                    layer.enabled: true
+                    layer.samplerName: "source"
+                    layer.effect: ShaderEffect {
+                        property variant mask: ShaderEffectSource {
+                            sourceItem: circleMask
+                            hideSource: true
+                        }
+                        fragmentShader: "
+                            varying highp vec2 qt_TexCoord0;
+                            uniform lowp sampler2D source;
+                            uniform lowp sampler2D mask;
+                            uniform lowp float qt_Opacity;
+                            void main() {
+                                lowp vec4 tex = texture2D(source, qt_TexCoord0);
+                                lowp vec4 m = texture2D(mask, qt_TexCoord0);
+                                gl_FragColor = tex * m.a * qt_Opacity;
+                            }"
+                    }
+                }
             }
             Text {
                 anchors.centerIn: parent

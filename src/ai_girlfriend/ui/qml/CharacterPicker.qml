@@ -72,6 +72,16 @@ Page {
                             font.pixelSize: Theme.fontSizeS + 1
                         }
                     }
+                    IconButton {
+                        glyph: "✎"
+                        fg: Theme.onSurfaceVariant
+                        enabled: !settingsBackend.busy
+                        accessibleName: qsTr("Edit character")
+                        implicitWidth: 36
+                        implicitHeight: 36
+                        onClicked: view.StackView.view.push(Qt.resolvedUrl("CharacterEditor.qml"),
+                                                            { characterId: modelData })
+                    }
                     Rectangle {
                         Layout.preferredWidth: 28; Layout.preferredHeight: 28
                         radius: 14
@@ -94,5 +104,23 @@ Page {
         Behavior on opacity { NumberAnimation { duration: 150 } }
         MouseArea { anchors.fill: parent }   // swallow input
         BusyIndicator { anchors.centerIn: parent; running: parent.visible }
+    }
+
+    // Floating action button: add a new character.
+    Rectangle {
+        width: 56; height: 56; radius: 28
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 24
+        z: 5
+        color: Theme.primary
+        Accessible.role: Accessible.Button
+        Accessible.name: qsTr("Add character")
+        Text { anchors.centerIn: parent; text: "+"; color: Theme.onPrimary; font.pixelSize: 30; font.bold: true }
+        MouseArea {
+            anchors.fill: parent
+            enabled: !settingsBackend.busy
+            onClicked: view.StackView.view.push(Qt.resolvedUrl("CharacterEditor.qml"))
+        }
     }
 }

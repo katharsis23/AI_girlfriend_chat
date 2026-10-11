@@ -11,7 +11,8 @@ from typing import Any
 
 from PySide6.QtCore import Property, QObject, QThread, QUrl, Signal, Slot
 
-from src.ai_girlfriend.ui.themes import THEMES, ThemeController
+from src.ai_girlfriend.ui.characters_store import CharacterStore
+from src.ai_girlfriend.ui.themes import REQUIRED_TOKENS, THEMES, ThemeController
 
 
 class AsyncWorker(QThread):
@@ -169,7 +170,9 @@ class ChatBackend(QObject):
 
 class SettingsBackend(QObject):
     currentThemeChanged = Signal()
+    themesChanged = Signal()
     currentCharacterChanged = Signal()
+    charactersChanged = Signal()
     themeApplied = Signal(str)
     characterChanged = Signal(str)
     busyChanged = Signal(bool)
@@ -182,24 +185,71 @@ class SettingsBackend(QObject):
         chat: ChatBackend,
         theme: ThemeController,
         character: Any,
+        character_store: CharacterStore | None = None,
         parent=None,
     ):
         super().__init__(parent)
         self._worker, self._root, self._chat, self._theme = worker, root, chat, theme
+        self._character_store = character_store
+        self._built_in_ids = {c.character_id for c in root.config.characters}
         self._characters = list(root.config.characters)
+        if self._character_store is not None:
+            for info in self._character_store.load():
+                if not any(
+                    c.character_id == info.character_id for c in self._characters
+                ):
+                    self._characters.append(info)
         self._current = character.character_id
         self._busy = False
         self._built.connect(self._on_built)
+        self._theme.themesChanged.connect(self.themesChanged.emit)
 
-    @Property("QStringList", constant=True)
+    # --- theme management ----------------------------------------------
+    @Property("QStringList", notify=themesChanged)
     def themes(self):
-        return list(THEMES)
+        return list(self._theme.themes)
 
     @Property(str, notify=currentThemeChanged)
     def currentTheme(self):
         return self._theme.themeId
 
     @Property("QStringList", constant=True)
+    def colorTokens(self):
+        return list(REQUIRED_TOKENS)
+
+    @Slot(str)
+    def selectTheme(self, theme_id: str) -> None:
+        if theme_id not in self._theme.themes:
+            return
+        self._theme.setTheme(theme_id)
+        self.currentThemeChanged.emit()
+        self.themeApplied.emit(theme_id)
+
+    @Slot(str, str, bool, "QVariantMap", result=str)
+    def saveTheme(self, theme_id: str, name: str, dark: bool, colors) -> str:
+        """Create/update a custom theme; returns the id or '' on failure."""
+        saved = self._theme.saveCustomTheme(theme_id, name, dark, dict(colors))
+        if saved:
+            self.currentThemeChanged.emit()
+            self.themeApplied.emit(saved)
+        return saved
+
+    @Slot(str, result=bool)
+    def deleteTheme(self, theme_id: str) -> bool:
+        removed = self._theme.deleteCustomTheme(theme_id)
+        if removed:
+            self.currentThemeChanged.emit()
+        return removed
+
+    @Slot(str, result="QVariantMap")
+    def themeColors(self, theme_id: str):
+        theme = self._theme.themes.get(theme_id)
+        if theme is None:
+            return {}
+        return dict(theme["colors"])
+
+    # --- character management ------------------------------------------
+    @Property("QStringList", notify=charactersChanged)
     def characters(self):
         return [c.character_id for c in self._characters]
 
@@ -212,24 +262,141 @@ class SettingsBackend(QObject):
         return self._busy
 
     @Slot(str)
-    def selectTheme(self, theme_id: str) -> None:
-        if theme_id not in THEMES:
-            return
-        self._theme.setTheme(theme_id)
-        self.currentThemeChanged.emit()
-        self.themeApplied.emit(theme_id)
-
-    @Slot(str)
     def selectCharacter(self, character_id: str) -> None:
         if self._busy or character_id == self._current:
             return
-        info = next(
-            (c for c in self._characters if c.character_id == character_id), None
-        )
+        info = self._find(character_id)
         if info is None:
             return
         self._set_busy(True)
+        self._rebuild(info, character_id)
 
+    @Slot("QVariantMap", result=str)
+    def saveCharacter(self, data) -> str:
+        """Create or update a character and select it.
+
+        ``data`` mirrors the Settings form: name, personality, greeting, id of
+        the edited character (optional), and a map of expression -> asset path.
+        Returns the resulting character id, or '' on validation error.
+        """
+        from src.ai_girlfriend.models.character import CharacterInfo
+
+        name = (data.get("name") or "").strip()
+        if not name:
+            return ""
+        photo = {
+            str(k): str(v) for k, v in (data.get("photo_emoji_map") or {}).items() if v
+        }
+        try:
+            info = CharacterInfo(
+                name=name,
+                personality=str(data.get("personality") or ""),
+                greeting_message=str(data.get("greeting_message") or ""),
+                photo_emoji_map=photo,
+                initial_expression=str(data.get("initial_expression") or "default"),
+            )
+        except Exception as exc:
+            self._chat.errorRaised.emit(str(exc) or exc.__class__.__name__)
+            return ""
+
+        new_id = info.character_id
+        original_id = data.get("original_id")
+        # Replace the edited character in-place (keep its list position).
+        for i, c in enumerate(self._characters):
+            if c.character_id == (original_id or new_id):
+                self._characters[i] = info
+                break
+        else:
+            self._characters.append(info)
+
+        if original_id and original_id != new_id:
+            self._current = new_id if self._current == original_id else self._current
+        self._persist_characters()
+        self.charactersChanged.emit()
+        self._set_busy(True)
+        self._rebuild(info, new_id)
+        return new_id
+
+    @Slot(str, result=bool)
+    def deleteCharacter(self, character_id: str) -> bool:
+        """Delete a custom character (built-ins cannot be removed)."""
+        if character_id in self._built_in_ids:
+            return False
+        before = len(self._characters)
+        self._characters = [
+            c for c in self._characters if c.character_id != character_id
+        ]
+        if len(self._characters) == before:
+            return False
+        self._persist_characters()
+        self.charactersChanged.emit()
+        if self._current == character_id and self._characters:
+            self.selectCharacter(self._characters[0].character_id)
+        return True
+
+    @Slot(result="QVariantMap")
+    def newCharacterTemplate(self):
+        return {
+            "name": "",
+            "personality": "",
+            "greeting_message": "",
+            "initial_expression": "default",
+            "photo_emoji_map": {},
+        }
+
+    @Slot(str, result="QVariantMap")
+    def characterPhotos(self, character_id: str):
+        c = self._find(character_id)
+        if c is None:
+            return {}
+        return dict(getattr(c, "photo_emoji_map", {}) or {})
+
+    # --- view helpers (display data for the pickers) --------------------
+    @Slot(str, result="QVariantMap")
+    def themeInfo(self, theme_id: str):
+        t = self._theme.themes.get(theme_id) or THEMES.get(theme_id)
+        if t is None:
+            return {}
+        c = t["colors"]
+        return {
+            "name": t["name"],
+            "dark": t["dark"],
+            "custom": bool(t.get("custom")),
+            "primary": c["primary"],
+            "secondary": c["secondary"],
+            "background": c["background"],
+        }
+
+    @Slot(str, result="QVariantMap")
+    def characterInfo(self, character_id: str):
+        c = self._find(character_id)
+        if c is None:
+            return {}
+        expr = getattr(c, "initial_expression", "neutral")
+        return {
+            "name": c.name,
+            "personality": getattr(c, "personality", "") or "",
+            "greeting_message": _character_greeting(c),
+            "expression": expr,
+            "custom": character_id not in self._built_in_ids,
+            "thumb": _expression_url(c, expr, self._chat._pipeline),
+        }
+
+    # --- internals ------------------------------------------------------
+    def _find(self, character_id: str):
+        return next(
+            (c for c in self._characters if c.character_id == character_id), None
+        )
+
+    def _persist_characters(self) -> None:
+        if self._character_store is None:
+            return
+        custom = [
+            c for c in self._characters if c.character_id not in self._built_in_ids
+        ]
+        self._character_store.save(custom)
+
+    def _rebuild(self, info, character_id: str) -> None:
         async def build():
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
@@ -241,31 +408,6 @@ class SettingsBackend(QObject):
 
         self._worker.submit(build()).add_done_callback(done)
 
-    # --- view helpers (display data for the pickers) --------------------
-    @Slot(str, result="QVariantMap")
-    def themeInfo(self, theme_id: str):
-        t = THEMES[theme_id]
-        c = t["colors"]
-        return {
-            "name": t["name"],
-            "dark": t["dark"],
-            "primary": c["primary"],
-            "secondary": c["secondary"],
-            "background": c["background"],
-        }
-
-    @Slot(str, result="QVariantMap")
-    def characterInfo(self, character_id: str):
-        c = next(c for c in self._characters if c.character_id == character_id)
-        expr = getattr(c, "initial_expression", "neutral")
-        return {
-            "name": c.name,
-            "personality": getattr(c, "personality", "") or "",
-            "expression": expr,
-            "thumb": _expression_url(c, expr, self._chat._pipeline),
-        }
-
-    # --- internals ------------------------------------------------------
     def _set_busy(self, value: bool) -> None:
         if self._busy != value:
             self._busy = value
@@ -279,9 +421,12 @@ class SettingsBackend(QObject):
             self._set_busy(False)
             self._chat.errorRaised.emit(str(exc) or exc.__class__.__name__)
             return
-        info = next(c for c in self._characters if c.character_id == character_id)
-        self._current = character_id
-        self._chat.apply_character(pipeline, info)  # fresh chat_id, greeting, portrait
-        self.currentCharacterChanged.emit()
-        self.characterChanged.emit(character_id)
+        info = self._find(character_id)
+        if info is not None:
+            self._current = character_id
+            self._chat.apply_character(
+                pipeline, info
+            )  # fresh chat_id, greeting, portrait
+            self.currentCharacterChanged.emit()
+            self.characterChanged.emit(character_id)
         self._set_busy(False)

@@ -11,8 +11,10 @@ from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from src.ai_girlfriend.ui.backends import AsyncWorker, ChatBackend, SettingsBackend
+from src.ai_girlfriend.ui.characters_store import CharacterStore
 from src.ai_girlfriend.ui.plugins import builtin_registry
 from src.ai_girlfriend.ui.themes import ThemeController
+from src.ai_girlfriend.ui.themes_store import ThemeStore
 
 QML_DIR = Path(__file__).resolve().parent / "qml"
 
@@ -45,9 +47,11 @@ def run(root=None, demo: bool = False) -> int:
     character = root.config.characters[0]
     pipeline = root.build_pipeline(character=character)
 
-    theme = ThemeController()
+    theme = ThemeController(store=ThemeStore())
     chat = ChatBackend(worker, pipeline, character)
-    settings = SettingsBackend(worker, root, chat, theme, character)
+    settings = SettingsBackend(
+        worker, root, chat, theme, character, character_store=CharacterStore()
+    )
 
     qmlRegisterSingletonInstance(ThemeController, "App", 1, 0, "ThemeController", theme)
 
