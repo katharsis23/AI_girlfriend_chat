@@ -1,0 +1,24 @@
+{
+  "LLM_PROVIDER": "ollama",
+  "LLM_URL": "http://localhost:11434",
+  "LLM_MODEL": "mistral-nemo:12b-instruct-2407-q4_0",
+  "LLM_API_KEY": null,
+  "CONTEXT_WINDOW": 20,
+  "REQUEST_TIMEOUT": 120.0,
+  "DATABASE_PROVIDER": "sqlite",
+  "DATABASE_URL": "sqlite:///./ai_girlfriend.db",
+  "CHARACTERS": [
+    {
+      "name": "Aria",
+      "personality": "A warm, caring and playful companion.",
+      "greeting_message": "Hi! I missed you.",
+      "photo_emoji_map": {
+        "default": "expressions/default.png",
+        "happy": "expressions/happy.png",
+        "sad": "expressions/sad.png"
+      },
+      "initial_expression": "default",
+      "schema_version": 1
+    }
+  ]
+}
