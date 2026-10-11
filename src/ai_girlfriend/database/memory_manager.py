@@ -1,16 +1,39 @@
-from src.ai_girlfriend.database.database_controller import DatabaseController
+"""Coordinates context assembly and exchange persistence.
+
+``MemoryManager`` is the single point the pipeline talks to for memory. It
+depends on ``DatabaseController`` (not on a concrete database) and on an
+``IContextProvider`` (see spec, sections 4 and 6.3).
+"""
+
 from uuid import UUID
-from src.ai_girlfriend.models.llm import Message
+
+from src.ai_girlfriend.database.database_controller import DatabaseController
 from src.ai_girlfriend.models.context import ContextBundle, IContextProvider
+from src.ai_girlfriend.models.llm import Message
 
 
 class MemoryManager:
-    def __init__(self, database: DatabaseController, context_provider: IContextProvider ):
+    """Builds context bundles and records exchanges."""
+
+    def __init__(
+        self, database: DatabaseController, context_provider: IContextProvider
+    ):
         self.database = database
         self.context_provider = context_provider
 
-    async def build_context(self, chat_id: UUID, user_message: Message ) -> ContextBundle:
-        ...
+    async def build_context(
+        self, chat_id: UUID, user_message: Message
+    ) -> ContextBundle:
+        """Assemble the context (history + memories) for the given message."""
+        return await self.context_provider.build_context(
+            query=user_message.content, chat_id=chat_id
+        )
 
-    async def record_exchange(self, user_message: Message, bot_message: Message):
-        ...
+    async def record_exchange(
+        self, user_message: Message, bot_message: Message
+    ) -> None:
+        """Persist the user and assistant messages in a single transaction."""
+        await self.database.save_exchange(user_message, bot_message)
+
+
+__all__ = ["MemoryManager"]

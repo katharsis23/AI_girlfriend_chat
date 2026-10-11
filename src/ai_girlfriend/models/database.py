@@ -1,76 +1,58 @@
-from typing import Protocol
-import asyncio
-from uuid import UUID
-from pydantic import Field, BaseModel
-from src.ai_girlfriend.models.llm import Message
+"""Domain models and contract for database storage.
+
+``IDatabaseStorage`` is the low-level contract implemented by concrete
+providers (SQLite, in-memory, ...). SQL and transactions live only inside the
+providers; the core never sees them (see spec, section 6.2).
+"""
+
 from datetime import datetime
+from typing import Protocol, runtime_checkable
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+from src.ai_girlfriend.models.llm import Message
 
 
+@runtime_checkable
 class IDatabaseStorage(Protocol):
-    """Protocol to unify the Low-Level DBProviders API"""
+    """Protocol to unify the low-level database providers' API."""
 
-
-    async def init(self):
-        """
-        Checks for database in db path, creates tables and database
-        """
+    async def init(self) -> None:
+        """Check for the database, create tables and the database file."""
         ...
-
 
     async def create_chat(self) -> UUID:
-        """
-        Creates chat in database and returns uuid of instance
-        """
+        """Create a chat and return its identifier."""
         ...
 
-    async def save_message(self, message: str, chat_id: UUID) -> UUID:
-        """
-        Creates message instance in database
-        """
+    async def save_message(self, message: Message) -> UUID:
+        """Persist a single message."""
         ...
 
-    async def save_exchange(self, user_message: str, bot_message: str):
+    async def save_exchange(self, user_message: Message, bot_message: Message) -> None:
+        """Persist a user/assistant pair atomically in one transaction."""
         ...
 
-    async def get_chat_message(self, chat_id: UUID) -> list:
+    async def get_recent_messages(self, chat_id: UUID, limit: int) -> list[Message]:
+        """Return up to ``limit`` most recent messages of a chat, oldest first."""
         ...
 
-
-    async def get_recent_messages(self):
-        """Returns chat history of the last edited chat"""
-
-
-    async def _close():
+    async def close(self) -> None:
+        """Release underlying resources."""
         ...
 
 
 class Chat(BaseModel):
-    id: UUID = Field(
-        description="UUID of chat instance"
-    )
-    content: list[Message] = Field(
-        description="List of Messages: Chat history"
-    )
+    """A conversation between the user and the companion."""
+
+    id: UUID = Field(description="UUID of the chat instance.")
+    content: list[Message] = Field(default_factory=list, description="Chat history.")
     summary: Message | None = Field(
-        description="In future we will add to sumarize the chat to econom the context space"
+        default=None,
+        description="Optional summary used to economize the context window.",
     )
-    updated_at: datetime = Field(
-        description="The last edited time"
-    )
-    # Consider adding additional fields
+    updated_at: datetime = Field(description="The last edited time.")
 
 
-# ========= Context ===========
-
-class ContextBundle(BaseModel):
-    messages: list[Message] = Field(
-        description="Content"
-    )
-
-class IContextProvider(BaseModel):
-    async def build_context(self, query, chat_id: UUID) -> ContextBundle:
-        ...
-
-class ConversationWindowProvider(BaseModel):
-    database
-    window
+__all__ = ["Chat", "IDatabaseStorage"]

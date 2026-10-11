@@ -27,6 +27,20 @@ def test(c):
     c.run("poetry run pytest")
 
 
+@task
+def demo(c):
+    """Run the desktop QML UI against the offline demo core."""
+    print("[EXECUTING]: Launching the QML UI (demo core)...")
+    c.run("poetry run python -m src.ai_girlfriend.ui --demo")
+
+
+@task
+def ui(c):
+    """Run the desktop QML UI against the real pipeline (reads .env)."""
+    print("[EXECUTING]: Launching the QML UI...")
+    c.run("poetry run python -m src.ai_girlfriend.ui")
+
+
 @task(pre=[check, test])
 def ci(c):
     """Run all quality gates (Lint check + Tests) for CI/CD pipelines."""
