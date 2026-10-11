@@ -6,17 +6,29 @@ authors = [
     {name = "katharsis23",email = "daniklv2006@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.13,<3.15"
 dependencies = [
     "fastapi (>=0.143.0,<0.144.0)",
     "uvicorn (>=0.54.0,<0.55.0)",
     "pydantic (>=2.14.0,<3.0.0)",
     "pydantic-settings (>=2.15.0,<3.0.0)",
-    "httpx (>=0.28.1,<0.29.0)"
+    "httpx (>=0.28.1,<0.29.0)",
+    "aiosqlite (>=0.20.0,<0.21.0)",
+    "pyside6 (>=6.12.0,<7.0.0)"
 ]
+
+[project.optional-dependencies]
+qt = ["PySide6"]
+rag = []
 
 [tool.poetry]
 packages = [{include = "ai_girlfriend", from = "src"}]
+# Ship the QML documents (and the singleton qmldir) inside the wheel so the
+# desktop UI works after `pip install .[qt]` (see docs/ui_spec.md §10.1).
+include = [
+    "ai_girlfriend/ui/qml/**/*.qml",
+    "ai_girlfriend/ui/qml/qmldir",
+]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -29,7 +41,8 @@ dev = [
     "ruff (>=0.17.0,<0.18.0)",
     "mypy (>=2.4.0,<3.0.0)",
     "pytest-asyncio (>=1.4.0,<2.0.0)",
-    "invoke (>=3.0.3,<4.0.0)"
+    "invoke (>=3.0.3,<4.0.0)",
+    "pre-commit (>=4.0.0,<5.0.0)"
 ]
 
 
@@ -50,6 +63,9 @@ exclude = [
     "build",
     "dist",
     "venv",
+    # Reference template for the QML UI; uses intentional Qt/camelCase
+    # conventions and is not part of the shipped package.
+    "ui_qml_template",
 ]
 
 [tool.ruff.lint]
@@ -60,6 +76,11 @@ select = ["E", "W", "F", "I", "B", "UP", "N", "ASYNC", "RUF"]
 ignore = [
     "E501",   # Ignore line-too-long (handled cleanly by ruff format)
     "RUF012",
+    # Ambiguous unicode: the app ships Ukrainian (Cyrillic) copy and uses
+    # typographic dashes in docstrings, both intentional.
+    "RUF001",
+    "RUF002",
+    "RUF003",
 ]
 
 fixable = ["ALL"]
@@ -71,6 +92,9 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 "__init__.py" = ["F401"]
 # Allow asset statements and ignore naming conventions in unit tests
 "tests/**/*.py" = ["S101", "N802", "N806"]
+# QML/PySide integration layer: camelCase names are required for properties
+# and slots to be visible from QML, so PEP8 naming rules do not apply.
+"src/ai_girlfriend/ui/**/*.py" = ["N802", "N815"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -85,3 +109,10 @@ docstring-code-line-length = "dynamic"
 # +======== Pytest ==============
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "unit: fast tests without I/O",
+    "contract: providers conform to their contracts",
+    "integration: pipeline with real dependencies (SQLite, Ollama)",
+]

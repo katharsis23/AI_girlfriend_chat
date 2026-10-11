@@ -1,0 +1,22 @@
+# Pre-commit hooks.
+#
+# Keep them fast and self-contained: pre-commit stashes unstaged changes, so
+# running the full test suite (which needs the nix-shell/poetry environment)
+# here is fragile and slow. Lint/format run via ruff's own managed
+# environment; the full `invoke check` + tests run in CI (spec §12).
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format

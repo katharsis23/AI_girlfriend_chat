@@ -1,6 +1,12 @@
 .vscode/
 __pycache_/
+**/__pycache__/**
 .ruff_cache/
+.pytest_cache/
+
 
 .env
 
+# Local runtime configuration (may contain API keys). Commit config.example.json
+# instead and copy it to config.json for local development.
+config.json
