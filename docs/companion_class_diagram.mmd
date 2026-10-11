@@ -1,0 +1,1765 @@
+classDiagram
+direction TB
+
+%% ===== Configuration =====
+class Settings {
+  +llm_provider: str
+  +database_provider: str
+  +database_url: str
+  +model: str
+  +context_window: int
+  +request_timeout: float
+  +log_level: str
+}
+
+class GfConfig {
+  +character_id: str
+  +name: str
+  +system_prompt: str
+  +expressions: dict
+  +initial_expression: str
+}
+
+%% ===== Composition root =====
+class CompositionRoot {
+  +build_pipeline(settings, config) GfPipeline
+}
+
+%% ===== Facade =====
+class GfPipeline {
+  -config: GfConfig
+  -ai_controller: AIController
+  -memory_manager: MemoryManager
+  -expression_manager: ExpressionManager
+  +initialize() async
+  +chat(message, conversation_id) async CharacterResponse
+  +stream_chat(message, conversation_id) AsyncIterator~StreamEvent~
+  +close() async
+}
+
+%% ===== LLM =====
+class AIController {
+  -provider: ILLMProvider
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class AIProviderFactory {
+  +create(settings) ILLMProvider
+}
+
+class ILLMProvider {
+  <<interface>>
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class OllamaProvider
+class OpenAICompatibleProvider
+class FakeLLMProvider
+
+%% ===== Storage =====
+class DatabaseController {
+  -provider: IDatabaseProvider
+  +initialize() async
+  +create_conversation() async str
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class DatabaseFactory {
+  +create(settings) IDatabaseProvider
+}
+
+class IDatabaseProvider {
+  <<interface>>
+  +initialize() async
+  +create_conversation() async str
+  +save_message(message) async
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class SQLiteProvider
+class InMemoryDatabaseProvider
+
+%% ===== Memory and context =====
+class MemoryManager {
+  -database: DatabaseController
+  -context_provider: IContextProvider
+  +build_context(conversation_id, user_message) async ContextBundle
+  +record_exchange(user_msg, assistant_msg) async
+}
+
+class IContextProvider {
+  <<interface>>
+  +build_context(query, conversation_id) async ContextBundle
+}
+
+class ConversationWindowProvider {
+  -database: DatabaseController
+  -window: int
+}
+
+class RAGContextProvider {
+  <<optional package>>
+}
+
+%% ===== Character =====
+class ExpressionManager {
+  -config: GfConfig
+  +resolve(expression_id) str
+  +asset_path(expression_id) Path
+}
+
+%% ===== Domain models =====
+class Message {
+  +id: str
+  +conversation_id: str
+  +role: Role
+  +content: str
+  +created_at: datetime
+}
+
+class GenerationRequest {
+  +messages: list~Message~
+  +model: str
+  +params: dict
+  +metadata: dict
+}
+
+class GenerationResponse {
+  +content: str
+  +usage: dict
+  +metadata: dict
+}
+
+class StreamEvent {
+  <<union>>
+  TextDelta
+  Done
+  Error
+}
+
+class ContextBundle {
+  +messages: list~Message~
+  +memories: list~Memory~
+}
+
+class CharacterResponse {
+  +text: str
+  +expression: str
+}
+
+%% ===== Errors =====
+class CompanionError {
+  <<exception>>
+}
+class ProviderError
+class GenerationTimeoutError
+class StorageError
+class ConfigError
+class InvalidExpressionError
+
+%% ===== Assistant tools (post-MVP) =====
+class ITool {
+  <<interface>>
+  +name: str
+  +description: str
+  +args_schema: type
+  +requires_permission: bool
+  +run(args) async ToolResult
+}
+
+class ToolRegistry {
+  +register(tool)
+  +get(name) ITool
+}
+
+%% ===== Adapters (outside the core) =====
+class FastAPIAdapter {
+  +chat_endpoint()
+  +stream_endpoint()
+}
+
+class QtDesktopAdapter {
+  +run()
+}
+
+class UIBuilder {
+  +build(pipeline, config) QApplication
+}
+
+%% ===== Relations: assembly =====
+CompositionRoot ..> Settings : reads
+CompositionRoot ..> GfConfig : reads
+CompositionRoot ..> AIProviderFactory : uses
+CompositionRoot ..> DatabaseFactory : uses
+CompositionRoot ..> GfPipeline : assembles
+
+%% ===== Relations: core =====
+GfPipeline --> GfConfig : reads
+GfPipeline --> AIController
+GfPipeline --> MemoryManager
+GfPipeline --> ExpressionManager
+
+AIController --> ILLMProvider : uses
+AIProviderFactory ..> ILLMProvider : creates
+ILLMProvider <|.. OllamaProvider
+ILLMProvider <|.. OpenAICompatibleProvider
+ILLMProvider <|.. FakeLLMProvider
+
+DatabaseController --> IDatabaseProvider : uses
+DatabaseFactory ..> IDatabaseProvider : creates
+IDatabaseProvider <|.. SQLiteProvider
+IDatabaseProvider <|.. InMemoryDatabaseProvider
+
+MemoryManager --> DatabaseController : uses
+MemoryManager --> IContextProvider : uses
+IContextProvider <|.. ConversationWindowProvider
+IContextProvider <|.. RAGContextProvider
+ConversationWindowProvider --> DatabaseController : reads history
+
+ExpressionManager --> GfConfig : validates against
+
+%% ===== Relations: models =====
+AIController ..> GenerationRequest
+AIController ..> GenerationResponse
+ILLMProvider ..> StreamEvent
+GfPipeline ..> CharacterResponse
+IContextProvider ..> ContextBundle
+GenerationRequest o-- Message
+ContextBundle o-- Message
+
+%% ===== Relations: errors =====
+CompanionError <|-- ProviderError
+CompanionError <|-- StorageError
+CompanionError <|-- ConfigError
+CompanionError <|-- InvalidExpressionError
+ProviderError <|-- GenerationTimeoutError
+
+%% ===== Relations: tools =====
+ToolRegistry o-- ITool
+
+%% ===== Relations: adapters =====
+FastAPIAdapter ..> GfPipeline : consumes
+QtDesktopAdapter ..> GfPipeline : consumes
+QtDesktopAdapter --> UIBuilder : uses
+
+note for ITool "Placeholder for the local assistant (post-MVP)"
+note for RAGContextProvider "Wrapper around the existing RAG project; separate optional package"
+note for UIBuilder "Lives in adapters/qt_desktop, not in the core"classDiagram
+direction TB
+
+%% ===== Configuration =====
+class Settings {
+  +llm_provider: str
+  +database_provider: str
+  +database_url: str
+  +model: str
+  +context_window: int
+  +request_timeout: float
+  +log_level: str
+}
+
+class GfConfig {
+  +character_id: str
+  +name: str
+  +system_prompt: str
+  +expressions: dict
+  +initial_expression: str
+}
+
+%% ===== Composition root =====
+class CompositionRoot {
+  +build_pipeline(settings, config) GfPipeline
+}
+
+%% ===== Facade =====
+class GfPipeline {
+  -config: GfConfig
+  -ai_controller: AIController
+  -memory_manager: MemoryManager
+  -expression_manager: ExpressionManager
+  +initialize() async
+  +chat(message, conversation_id) async CharacterResponse
+  +stream_chat(message, conversation_id) AsyncIterator~StreamEvent~
+  +close() async
+}
+
+%% ===== LLM =====
+class AIController {
+  -provider: ILLMProvider
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class AIProviderFactory {
+  +create(settings) ILLMProvider
+}
+
+class ILLMProvider {
+  <<interface>>
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class OllamaProvider
+class OpenAICompatibleProvider
+class FakeLLMProvider
+
+%% ===== Storage =====
+class DatabaseController {
+  -provider: IDatabaseProvider
+  +initialize() async
+  +create_conversation() async str
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class DatabaseFactory {
+  +create(settings) IDatabaseProvider
+}
+
+class IDatabaseProvider {
+  <<interface>>
+  +initialize() async
+  +create_conversation() async str
+  +save_message(message) async
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class SQLiteProvider
+class InMemoryDatabaseProvider
+
+%% ===== Memory and context =====
+class MemoryManager {
+  -database: DatabaseController
+  -context_provider: IContextProvider
+  +build_context(conversation_id, user_message) async ContextBundle
+  +record_exchange(user_msg, assistant_msg) async
+}
+
+class IContextProvider {
+  <<interface>>
+  +build_context(query, conversation_id) async ContextBundle
+}
+
+class ConversationWindowProvider {
+  -database: DatabaseController
+  -window: int
+}
+
+class RAGContextProvider {
+  <<optional package>>
+}
+
+%% ===== Character =====
+class ExpressionManager {
+  -config: GfConfig
+  +resolve(expression_id) str
+  +asset_path(expression_id) Path
+}
+
+%% ===== Domain models =====
+class Message {
+  +id: str
+  +conversation_id: str
+  +role: Role
+  +content: str
+  +created_at: datetime
+}
+
+class GenerationRequest {
+  +messages: list~Message~
+  +model: str
+  +params: dict
+  +metadata: dict
+}
+
+class GenerationResponse {
+  +content: str
+  +usage: dict
+  +metadata: dict
+}
+
+class StreamEvent {
+  <<union>>
+  TextDelta
+  Done
+  Error
+}
+
+class ContextBundle {
+  +messages: list~Message~
+  +memories: list~Memory~
+}
+
+class CharacterResponse {
+  +text: str
+  +expression: str
+}
+
+%% ===== Errors =====
+class CompanionError {
+  <<exception>>
+}
+class ProviderError
+class GenerationTimeoutError
+class StorageError
+class ConfigError
+class InvalidExpressionError
+
+%% ===== Assistant tools (post-MVP) =====
+class ITool {
+  <<interface>>
+  +name: str
+  +description: str
+  +args_schema: type
+  +requires_permission: bool
+  +run(args) async ToolResult
+}
+
+class ToolRegistry {
+  +register(tool)
+  +get(name) ITool
+}
+
+%% ===== Adapters (outside the core) =====
+class FastAPIAdapter {
+  +chat_endpoint()
+  +stream_endpoint()
+}
+
+class QtDesktopAdapter {
+  +run()
+}
+
+class UIBuilder {
+  +build(pipeline, config) QApplication
+}
+
+%% ===== Relations: assembly =====
+CompositionRoot ..> Settings : reads
+CompositionRoot ..> GfConfig : reads
+CompositionRoot ..> AIProviderFactory : uses
+CompositionRoot ..> DatabaseFactory : uses
+CompositionRoot ..> GfPipeline : assembles
+
+%% ===== Relations: core =====
+GfPipeline --> GfConfig : reads
+GfPipeline --> AIController
+GfPipeline --> MemoryManager
+GfPipeline --> ExpressionManager
+
+AIController --> ILLMProvider : uses
+AIProviderFactory ..> ILLMProvider : creates
+ILLMProvider <|.. OllamaProvider
+ILLMProvider <|.. OpenAICompatibleProvider
+ILLMProvider <|.. FakeLLMProvider
+
+DatabaseController --> IDatabaseProvider : uses
+DatabaseFactory ..> IDatabaseProvider : creates
+IDatabaseProvider <|.. SQLiteProvider
+IDatabaseProvider <|.. InMemoryDatabaseProvider
+
+MemoryManager --> DatabaseController : uses
+MemoryManager --> IContextProvider : uses
+IContextProvider <|.. ConversationWindowProvider
+IContextProvider <|.. RAGContextProvider
+ConversationWindowProvider --> DatabaseController : reads history
+
+ExpressionManager --> GfConfig : validates against
+
+%% ===== Relations: models =====
+AIController ..> GenerationRequest
+AIController ..> GenerationResponse
+ILLMProvider ..> StreamEvent
+GfPipeline ..> CharacterResponse
+IContextProvider ..> ContextBundle
+GenerationRequest o-- Message
+ContextBundle o-- Message
+
+%% ===== Relations: errors =====
+CompanionError <|-- ProviderError
+CompanionError <|-- StorageError
+CompanionError <|-- ConfigError
+CompanionError <|-- InvalidExpressionError
+ProviderError <|-- GenerationTimeoutError
+
+%% ===== Relations: tools =====
+ToolRegistry o-- ITool
+
+%% ===== Relations: adapters =====
+FastAPIAdapter ..> GfPipeline : consumes
+QtDesktopAdapter ..> GfPipeline : consumes
+QtDesktopAdapter --> UIBuilder : uses
+
+note for ITool "Placeholder for the local assistant (post-MVP)"
+note for RAGContextProvider "Wrapper around the existing RAG project; separate optional package"
+note for UIBuilder "Lives in adapters/qt_desktop, not in the core"classDiagram
+direction TB
+
+%% ===== Configuration =====
+class Settings {
+  +llm_provider: str
+  +database_provider: str
+  +database_url: str
+  +model: str
+  +context_window: int
+  +request_timeout: float
+  +log_level: str
+}
+
+class GfConfig {
+  +character_id: str
+  +name: str
+  +system_prompt: str
+  +expressions: dict
+  +initial_expression: str
+}
+
+%% ===== Composition root =====
+class CompositionRoot {
+  +build_pipeline(settings, config) GfPipeline
+}
+
+%% ===== Facade =====
+class GfPipeline {
+  -config: GfConfig
+  -ai_controller: AIController
+  -memory_manager: MemoryManager
+  -expression_manager: ExpressionManager
+  +initialize() async
+  +chat(message, conversation_id) async CharacterResponse
+  +stream_chat(message, conversation_id) AsyncIterator~StreamEvent~
+  +close() async
+}
+
+%% ===== LLM =====
+class AIController {
+  -provider: ILLMProvider
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class AIProviderFactory {
+  +create(settings) ILLMProvider
+}
+
+class ILLMProvider {
+  <<interface>>
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class OllamaProvider
+class OpenAICompatibleProvider
+class FakeLLMProvider
+
+%% ===== Storage =====
+class DatabaseController {
+  -provider: IDatabaseProvider
+  +initialize() async
+  +create_conversation() async str
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class DatabaseFactory {
+  +create(settings) IDatabaseProvider
+}
+
+class IDatabaseProvider {
+  <<interface>>
+  +initialize() async
+  +create_conversation() async str
+  +save_message(message) async
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class SQLiteProvider
+class InMemoryDatabaseProvider
+
+%% ===== Memory and context =====
+class MemoryManager {
+  -database: DatabaseController
+  -context_provider: IContextProvider
+  +build_context(conversation_id, user_message) async ContextBundle
+  +record_exchange(user_msg, assistant_msg) async
+}
+
+class IContextProvider {
+  <<interface>>
+  +build_context(query, conversation_id) async ContextBundle
+}
+
+class ConversationWindowProvider {
+  -database: DatabaseController
+  -window: int
+}
+
+class RAGContextProvider {
+  <<optional package>>
+}
+
+%% ===== Character =====
+class ExpressionManager {
+  -config: GfConfig
+  +resolve(expression_id) str
+  +asset_path(expression_id) Path
+}
+
+%% ===== Domain models =====
+class Message {
+  +id: str
+  +conversation_id: str
+  +role: Role
+  +content: str
+  +created_at: datetime
+}
+
+class GenerationRequest {
+  +messages: list~Message~
+  +model: str
+  +params: dict
+  +metadata: dict
+}
+
+class GenerationResponse {
+  +content: str
+  +usage: dict
+  +metadata: dict
+}
+
+class StreamEvent {
+  <<union>>
+  TextDelta
+  Done
+  Error
+}
+
+class ContextBundle {
+  +messages: list~Message~
+  +memories: list~Memory~
+}
+
+class CharacterResponse {
+  +text: str
+  +expression: str
+}
+
+%% ===== Errors =====
+class CompanionError {
+  <<exception>>
+}
+class ProviderError
+class GenerationTimeoutError
+class StorageError
+class ConfigError
+class InvalidExpressionError
+
+%% ===== Assistant tools (post-MVP) =====
+class ITool {
+  <<interface>>
+  +name: str
+  +description: str
+  +args_schema: type
+  +requires_permission: bool
+  +run(args) async ToolResult
+}
+
+class ToolRegistry {
+  +register(tool)
+  +get(name) ITool
+}
+
+%% ===== Adapters (outside the core) =====
+class FastAPIAdapter {
+  +chat_endpoint()
+  +stream_endpoint()
+}
+
+class QtDesktopAdapter {
+  +run()
+}
+
+class UIBuilder {
+  +build(pipeline, config) QApplication
+}
+
+%% ===== Relations: assembly =====
+CompositionRoot ..> Settings : reads
+CompositionRoot ..> GfConfig : reads
+CompositionRoot ..> AIProviderFactory : uses
+CompositionRoot ..> DatabaseFactory : uses
+CompositionRoot ..> GfPipeline : assembles
+
+%% ===== Relations: core =====
+GfPipeline --> GfConfig : reads
+GfPipeline --> AIController
+GfPipeline --> MemoryManager
+GfPipeline --> ExpressionManager
+
+AIController --> ILLMProvider : uses
+AIProviderFactory ..> ILLMProvider : creates
+ILLMProvider <|.. OllamaProvider
+ILLMProvider <|.. OpenAICompatibleProvider
+ILLMProvider <|.. FakeLLMProvider
+
+DatabaseController --> IDatabaseProvider : uses
+DatabaseFactory ..> IDatabaseProvider : creates
+IDatabaseProvider <|.. SQLiteProvider
+IDatabaseProvider <|.. InMemoryDatabaseProvider
+
+MemoryManager --> DatabaseController : uses
+MemoryManager --> IContextProvider : uses
+IContextProvider <|.. ConversationWindowProvider
+IContextProvider <|.. RAGContextProvider
+ConversationWindowProvider --> DatabaseController : reads history
+
+ExpressionManager --> GfConfig : validates against
+
+%% ===== Relations: models =====
+AIController ..> GenerationRequest
+AIController ..> GenerationResponse
+ILLMProvider ..> StreamEvent
+GfPipeline ..> CharacterResponse
+IContextProvider ..> ContextBundle
+GenerationRequest o-- Message
+ContextBundle o-- Message
+
+%% ===== Relations: errors =====
+CompanionError <|-- ProviderError
+CompanionError <|-- StorageError
+CompanionError <|-- ConfigError
+CompanionError <|-- InvalidExpressionError
+ProviderError <|-- GenerationTimeoutError
+
+%% ===== Relations: tools =====
+ToolRegistry o-- ITool
+
+%% ===== Relations: adapters =====
+FastAPIAdapter ..> GfPipeline : consumes
+QtDesktopAdapter ..> GfPipeline : consumes
+QtDesktopAdapter --> UIBuilder : uses
+
+note for ITool "Placeholder for the local assistant (post-MVP)"
+note for RAGContextProvider "Wrapper around the existing RAG project; separate optional package"
+note for UIBuilder "Lives in adapters/qt_desktop, not in the core"classDiagram
+direction TB
+
+%% ===== Configuration =====
+class Settings {
+  +llm_provider: str
+  +database_provider: str
+  +database_url: str
+  +model: str
+  +context_window: int
+  +request_timeout: float
+  +log_level: str
+}
+
+class GfConfig {
+  +character_id: str
+  +name: str
+  +system_prompt: str
+  +expressions: dict
+  +initial_expression: str
+}
+
+%% ===== Composition root =====
+class CompositionRoot {
+  +build_pipeline(settings, config) GfPipeline
+}
+
+%% ===== Facade =====
+class GfPipeline {
+  -config: GfConfig
+  -ai_controller: AIController
+  -memory_manager: MemoryManager
+  -expression_manager: ExpressionManager
+  +initialize() async
+  +chat(message, conversation_id) async CharacterResponse
+  +stream_chat(message, conversation_id) AsyncIterator~StreamEvent~
+  +close() async
+}
+
+%% ===== LLM =====
+class AIController {
+  -provider: ILLMProvider
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class AIProviderFactory {
+  +create(settings) ILLMProvider
+}
+
+class ILLMProvider {
+  <<interface>>
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class OllamaProvider
+class OpenAICompatibleProvider
+class FakeLLMProvider
+
+%% ===== Storage =====
+class DatabaseController {
+  -provider: IDatabaseProvider
+  +initialize() async
+  +create_conversation() async str
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class DatabaseFactory {
+  +create(settings) IDatabaseProvider
+}
+
+class IDatabaseProvider {
+  <<interface>>
+  +initialize() async
+  +create_conversation() async str
+  +save_message(message) async
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class SQLiteProvider
+class InMemoryDatabaseProvider
+
+%% ===== Memory and context =====
+class MemoryManager {
+  -database: DatabaseController
+  -context_provider: IContextProvider
+  +build_context(conversation_id, user_message) async ContextBundle
+  +record_exchange(user_msg, assistant_msg) async
+}
+
+class IContextProvider {
+  <<interface>>
+  +build_context(query, conversation_id) async ContextBundle
+}
+
+class ConversationWindowProvider {
+  -database: DatabaseController
+  -window: int
+}
+
+class RAGContextProvider {
+  <<optional package>>
+}
+
+%% ===== Character =====
+class ExpressionManager {
+  -config: GfConfig
+  +resolve(expression_id) str
+  +asset_path(expression_id) Path
+}
+
+%% ===== Domain models =====
+class Message {
+  +id: str
+  +conversation_id: str
+  +role: Role
+  +content: str
+  +created_at: datetime
+}
+
+class GenerationRequest {
+  +messages: list~Message~
+  +model: str
+  +params: dict
+  +metadata: dict
+}
+
+class GenerationResponse {
+  +content: str
+  +usage: dict
+  +metadata: dict
+}
+
+class StreamEvent {
+  <<union>>
+  TextDelta
+  Done
+  Error
+}
+
+class ContextBundle {
+  +messages: list~Message~
+  +memories: list~Memory~
+}
+
+class CharacterResponse {
+  +text: str
+  +expression: str
+}
+
+%% ===== Errors =====
+class CompanionError {
+  <<exception>>
+}
+class ProviderError
+class GenerationTimeoutError
+class StorageError
+class ConfigError
+class InvalidExpressionError
+
+%% ===== Assistant tools (post-MVP) =====
+class ITool {
+  <<interface>>
+  +name: str
+  +description: str
+  +args_schema: type
+  +requires_permission: bool
+  +run(args) async ToolResult
+}
+
+class ToolRegistry {
+  +register(tool)
+  +get(name) ITool
+}
+
+%% ===== Adapters (outside the core) =====
+class FastAPIAdapter {
+  +chat_endpoint()
+  +stream_endpoint()
+}
+
+class QtDesktopAdapter {
+  +run()
+}
+
+class UIBuilder {
+  +build(pipeline, config) QApplication
+}
+
+%% ===== Relations: assembly =====
+CompositionRoot ..> Settings : reads
+CompositionRoot ..> GfConfig : reads
+CompositionRoot ..> AIProviderFactory : uses
+CompositionRoot ..> DatabaseFactory : uses
+CompositionRoot ..> GfPipeline : assembles
+
+%% ===== Relations: core =====
+GfPipeline --> GfConfig : reads
+GfPipeline --> AIController
+GfPipeline --> MemoryManager
+GfPipeline --> ExpressionManager
+
+AIController --> ILLMProvider : uses
+AIProviderFactory ..> ILLMProvider : creates
+ILLMProvider <|.. OllamaProvider
+ILLMProvider <|.. OpenAICompatibleProvider
+ILLMProvider <|.. FakeLLMProvider
+
+DatabaseController --> IDatabaseProvider : uses
+DatabaseFactory ..> IDatabaseProvider : creates
+IDatabaseProvider <|.. SQLiteProvider
+IDatabaseProvider <|.. InMemoryDatabaseProvider
+
+MemoryManager --> DatabaseController : uses
+MemoryManager --> IContextProvider : uses
+IContextProvider <|.. ConversationWindowProvider
+IContextProvider <|.. RAGContextProvider
+ConversationWindowProvider --> DatabaseController : reads history
+
+ExpressionManager --> GfConfig : validates against
+
+%% ===== Relations: models =====
+AIController ..> GenerationRequest
+AIController ..> GenerationResponse
+ILLMProvider ..> StreamEvent
+GfPipeline ..> CharacterResponse
+IContextProvider ..> ContextBundle
+GenerationRequest o-- Message
+ContextBundle o-- Message
+
+%% ===== Relations: errors =====
+CompanionError <|-- ProviderError
+CompanionError <|-- StorageError
+CompanionError <|-- ConfigError
+CompanionError <|-- InvalidExpressionError
+ProviderError <|-- GenerationTimeoutError
+
+%% ===== Relations: tools =====
+ToolRegistry o-- ITool
+
+%% ===== Relations: adapters =====
+FastAPIAdapter ..> GfPipeline : consumes
+QtDesktopAdapter ..> GfPipeline : consumes
+QtDesktopAdapter --> UIBuilder : uses
+
+note for ITool "Placeholder for the local assistant (post-MVP)"
+note for RAGContextProvider "Wrapper around the existing RAG project; separate optional package"
+note for UIBuilder "Lives in adapters/qt_desktop, not in the core"classDiagram
+direction TB
+
+%% ===== Configuration =====
+class Settings {
+  +llm_provider: str
+  +database_provider: str
+  +database_url: str
+  +model: str
+  +context_window: int
+  +request_timeout: float
+  +log_level: str
+}
+
+class GfConfig {
+  +character_id: str
+  +name: str
+  +system_prompt: str
+  +expressions: dict
+  +initial_expression: str
+}
+
+%% ===== Composition root =====
+class CompositionRoot {
+  +build_pipeline(settings, config) GfPipeline
+}
+
+%% ===== Facade =====
+class GfPipeline {
+  -config: GfConfig
+  -ai_controller: AIController
+  -memory_manager: MemoryManager
+  -expression_manager: ExpressionManager
+  +initialize() async
+  +chat(message, conversation_id) async CharacterResponse
+  +stream_chat(message, conversation_id) AsyncIterator~StreamEvent~
+  +close() async
+}
+
+%% ===== LLM =====
+class AIController {
+  -provider: ILLMProvider
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class AIProviderFactory {
+  +create(settings) ILLMProvider
+}
+
+class ILLMProvider {
+  <<interface>>
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class OllamaProvider
+class OpenAICompatibleProvider
+class FakeLLMProvider
+
+%% ===== Storage =====
+class DatabaseController {
+  -provider: IDatabaseProvider
+  +initialize() async
+  +create_conversation() async str
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class DatabaseFactory {
+  +create(settings) IDatabaseProvider
+}
+
+class IDatabaseProvider {
+  <<interface>>
+  +initialize() async
+  +create_conversation() async str
+  +save_message(message) async
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class SQLiteProvider
+class InMemoryDatabaseProvider
+
+%% ===== Memory and context =====
+class MemoryManager {
+  -database: DatabaseController
+  -context_provider: IContextProvider
+  +build_context(conversation_id, user_message) async ContextBundle
+  +record_exchange(user_msg, assistant_msg) async
+}
+
+class IContextProvider {
+  <<interface>>
+  +build_context(query, conversation_id) async ContextBundle
+}
+
+class ConversationWindowProvider {
+  -database: DatabaseController
+  -window: int
+}
+
+class RAGContextProvider {
+  <<optional package>>
+}
+
+%% ===== Character =====
+class ExpressionManager {
+  -config: GfConfig
+  +resolve(expression_id) str
+  +asset_path(expression_id) Path
+}
+
+%% ===== Domain models =====
+class Message {
+  +id: str
+  +conversation_id: str
+  +role: Role
+  +content: str
+  +created_at: datetime
+}
+
+class GenerationRequest {
+  +messages: list~Message~
+  +model: str
+  +params: dict
+  +metadata: dict
+}
+
+class GenerationResponse {
+  +content: str
+  +usage: dict
+  +metadata: dict
+}
+
+class StreamEvent {
+  <<union>>
+  TextDelta
+  Done
+  Error
+}
+
+class ContextBundle {
+  +messages: list~Message~
+  +memories: list~Memory~
+}
+
+class CharacterResponse {
+  +text: str
+  +expression: str
+}
+
+%% ===== Errors =====
+class CompanionError {
+  <<exception>>
+}
+class ProviderError
+class GenerationTimeoutError
+class StorageError
+class ConfigError
+class InvalidExpressionError
+
+%% ===== Assistant tools (post-MVP) =====
+class ITool {
+  <<interface>>
+  +name: str
+  +description: str
+  +args_schema: type
+  +requires_permission: bool
+  +run(args) async ToolResult
+}
+
+class ToolRegistry {
+  +register(tool)
+  +get(name) ITool
+}
+
+%% ===== Adapters (outside the core) =====
+class FastAPIAdapter {
+  +chat_endpoint()
+  +stream_endpoint()
+}
+
+class QtDesktopAdapter {
+  +run()
+}
+
+class UIBuilder {
+  +build(pipeline, config) QApplication
+}
+
+%% ===== Relations: assembly =====
+CompositionRoot ..> Settings : reads
+CompositionRoot ..> GfConfig : reads
+CompositionRoot ..> AIProviderFactory : uses
+CompositionRoot ..> DatabaseFactory : uses
+CompositionRoot ..> GfPipeline : assembles
+
+%% ===== Relations: core =====
+GfPipeline --> GfConfig : reads
+GfPipeline --> AIController
+GfPipeline --> MemoryManager
+GfPipeline --> ExpressionManager
+
+AIController --> ILLMProvider : uses
+AIProviderFactory ..> ILLMProvider : creates
+ILLMProvider <|.. OllamaProvider
+ILLMProvider <|.. OpenAICompatibleProvider
+ILLMProvider <|.. FakeLLMProvider
+
+DatabaseController --> IDatabaseProvider : uses
+DatabaseFactory ..> IDatabaseProvider : creates
+IDatabaseProvider <|.. SQLiteProvider
+IDatabaseProvider <|.. InMemoryDatabaseProvider
+
+MemoryManager --> DatabaseController : uses
+MemoryManager --> IContextProvider : uses
+IContextProvider <|.. ConversationWindowProvider
+IContextProvider <|.. RAGContextProvider
+ConversationWindowProvider --> DatabaseController : reads history
+
+ExpressionManager --> GfConfig : validates against
+
+%% ===== Relations: models =====
+AIController ..> GenerationRequest
+AIController ..> GenerationResponse
+ILLMProvider ..> StreamEvent
+GfPipeline ..> CharacterResponse
+IContextProvider ..> ContextBundle
+GenerationRequest o-- Message
+ContextBundle o-- Message
+
+%% ===== Relations: errors =====
+CompanionError <|-- ProviderError
+CompanionError <|-- StorageError
+CompanionError <|-- ConfigError
+CompanionError <|-- InvalidExpressionError
+ProviderError <|-- GenerationTimeoutError
+
+%% ===== Relations: tools =====
+ToolRegistry o-- ITool
+
+%% ===== Relations: adapters =====
+FastAPIAdapter ..> GfPipeline : consumes
+QtDesktopAdapter ..> GfPipeline : consumes
+QtDesktopAdapter --> UIBuilder : uses
+
+note for ITool "Placeholder for the local assistant (post-MVP)"
+note for RAGContextProvider "Wrapper around the existing RAG project; separate optional package"
+note for UIBuilder "Lives in adapters/qt_desktop, not in the core"classDiagram
+direction TB
+
+%% ===== Configuration =====
+class Settings {
+  +llm_provider: str
+  +database_provider: str
+  +database_url: str
+  +model: str
+  +context_window: int
+  +request_timeout: float
+  +log_level: str
+}
+
+class GfConfig {
+  +character_id: str
+  +name: str
+  +system_prompt: str
+  +expressions: dict
+  +initial_expression: str
+}
+
+%% ===== Composition root =====
+class CompositionRoot {
+  +build_pipeline(settings, config) GfPipeline
+}
+
+%% ===== Facade =====
+class GfPipeline {
+  -config: GfConfig
+  -ai_controller: AIController
+  -memory_manager: MemoryManager
+  -expression_manager: ExpressionManager
+  +initialize() async
+  +chat(message, conversation_id) async CharacterResponse
+  +stream_chat(message, conversation_id) AsyncIterator~StreamEvent~
+  +close() async
+}
+
+%% ===== LLM =====
+class AIController {
+  -provider: ILLMProvider
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class AIProviderFactory {
+  +create(settings) ILLMProvider
+}
+
+class ILLMProvider {
+  <<interface>>
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class OllamaProvider
+class OpenAICompatibleProvider
+class FakeLLMProvider
+
+%% ===== Storage =====
+class DatabaseController {
+  -provider: IDatabaseProvider
+  +initialize() async
+  +create_conversation() async str
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class DatabaseFactory {
+  +create(settings) IDatabaseProvider
+}
+
+class IDatabaseProvider {
+  <<interface>>
+  +initialize() async
+  +create_conversation() async str
+  +save_message(message) async
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class SQLiteProvider
+class InMemoryDatabaseProvider
+
+%% ===== Memory and context =====
+class MemoryManager {
+  -database: DatabaseController
+  -context_provider: IContextProvider
+  +build_context(conversation_id, user_message) async ContextBundle
+  +record_exchange(user_msg, assistant_msg) async
+}
+
+class IContextProvider {
+  <<interface>>
+  +build_context(query, conversation_id) async ContextBundle
+}
+
+class ConversationWindowProvider {
+  -database: DatabaseController
+  -window: int
+}
+
+class RAGContextProvider {
+  <<optional package>>
+}
+
+%% ===== Character =====
+class ExpressionManager {
+  -config: GfConfig
+  +resolve(expression_id) str
+  +asset_path(expression_id) Path
+}
+
+%% ===== Domain models =====
+class Message {
+  +id: str
+  +conversation_id: str
+  +role: Role
+  +content: str
+  +created_at: datetime
+}
+
+class GenerationRequest {
+  +messages: list~Message~
+  +model: str
+  +params: dict
+  +metadata: dict
+}
+
+class GenerationResponse {
+  +content: str
+  +usage: dict
+  +metadata: dict
+}
+
+class StreamEvent {
+  <<union>>
+  TextDelta
+  Done
+  Error
+}
+
+class ContextBundle {
+  +messages: list~Message~
+  +memories: list~Memory~
+}
+
+class CharacterResponse {
+  +text: str
+  +expression: str
+}
+
+%% ===== Errors =====
+class CompanionError {
+  <<exception>>
+}
+class ProviderError
+class GenerationTimeoutError
+class StorageError
+class ConfigError
+class InvalidExpressionError
+
+%% ===== Assistant tools (post-MVP) =====
+class ITool {
+  <<interface>>
+  +name: str
+  +description: str
+  +args_schema: type
+  +requires_permission: bool
+  +run(args) async ToolResult
+}
+
+class ToolRegistry {
+  +register(tool)
+  +get(name) ITool
+}
+
+%% ===== Adapters (outside the core) =====
+class FastAPIAdapter {
+  +chat_endpoint()
+  +stream_endpoint()
+}
+
+class QtDesktopAdapter {
+  +run()
+}
+
+class UIBuilder {
+  +build(pipeline, config) QApplication
+}
+
+%% ===== Relations: assembly =====
+CompositionRoot ..> Settings : reads
+CompositionRoot ..> GfConfig : reads
+CompositionRoot ..> AIProviderFactory : uses
+CompositionRoot ..> DatabaseFactory : uses
+CompositionRoot ..> GfPipeline : assembles
+
+%% ===== Relations: core =====
+GfPipeline --> GfConfig : reads
+GfPipeline --> AIController
+GfPipeline --> MemoryManager
+GfPipeline --> ExpressionManager
+
+AIController --> ILLMProvider : uses
+AIProviderFactory ..> ILLMProvider : creates
+ILLMProvider <|.. OllamaProvider
+ILLMProvider <|.. OpenAICompatibleProvider
+ILLMProvider <|.. FakeLLMProvider
+
+DatabaseController --> IDatabaseProvider : uses
+DatabaseFactory ..> IDatabaseProvider : creates
+IDatabaseProvider <|.. SQLiteProvider
+IDatabaseProvider <|.. InMemoryDatabaseProvider
+
+MemoryManager --> DatabaseController : uses
+MemoryManager --> IContextProvider : uses
+IContextProvider <|.. ConversationWindowProvider
+IContextProvider <|.. RAGContextProvider
+ConversationWindowProvider --> DatabaseController : reads history
+
+ExpressionManager --> GfConfig : validates against
+
+%% ===== Relations: models =====
+AIController ..> GenerationRequest
+AIController ..> GenerationResponse
+ILLMProvider ..> StreamEvent
+GfPipeline ..> CharacterResponse
+IContextProvider ..> ContextBundle
+GenerationRequest o-- Message
+ContextBundle o-- Message
+
+%% ===== Relations: errors =====
+CompanionError <|-- ProviderError
+CompanionError <|-- StorageError
+CompanionError <|-- ConfigError
+CompanionError <|-- InvalidExpressionError
+ProviderError <|-- GenerationTimeoutError
+
+%% ===== Relations: tools =====
+ToolRegistry o-- ITool
+
+%% ===== Relations: adapters =====
+FastAPIAdapter ..> GfPipeline : consumes
+QtDesktopAdapter ..> GfPipeline : consumes
+QtDesktopAdapter --> UIBuilder : uses
+
+note for ITool "Placeholder for the local assistant (post-MVP)"
+note for RAGContextProvider "Wrapper around the existing RAG project; separate optional package"
+note for UIBuilder "Lives in adapters/qt_desktop, not in the core"classDiagram
+direction TB
+
+%% ===== Configuration =====
+class Settings {
+  +llm_provider: str
+  +database_provider: str
+  +database_url: str
+  +model: str
+  +context_window: int
+  +request_timeout: float
+  +log_level: str
+}
+
+class GfConfig {
+  +character_id: str
+  +name: str
+  +system_prompt: str
+  +expressions: dict
+  +initial_expression: str
+}
+
+%% ===== Composition root =====
+class CompositionRoot {
+  +build_pipeline(settings, config) GfPipeline
+}
+
+%% ===== Facade =====
+class GfPipeline {
+  -config: GfConfig
+  -ai_controller: AIController
+  -memory_manager: MemoryManager
+  -expression_manager: ExpressionManager
+  +initialize() async
+  +chat(message, conversation_id) async CharacterResponse
+  +stream_chat(message, conversation_id) AsyncIterator~StreamEvent~
+  +close() async
+}
+
+%% ===== LLM =====
+class AIController {
+  -provider: ILLMProvider
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class AIProviderFactory {
+  +create(settings) ILLMProvider
+}
+
+class ILLMProvider {
+  <<interface>>
+  +generate(request) async GenerationResponse
+  +stream(request) AsyncIterator~StreamEvent~
+}
+
+class OllamaProvider
+class OpenAICompatibleProvider
+class FakeLLMProvider
+
+%% ===== Storage =====
+class DatabaseController {
+  -provider: IDatabaseProvider
+  +initialize() async
+  +create_conversation() async str
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class DatabaseFactory {
+  +create(settings) IDatabaseProvider
+}
+
+class IDatabaseProvider {
+  <<interface>>
+  +initialize() async
+  +create_conversation() async str
+  +save_message(message) async
+  +save_exchange(user_msg, assistant_msg) async
+  +get_recent_messages(conversation_id, limit) async list~Message~
+  +close() async
+}
+
+class SQLiteProvider
+class InMemoryDatabaseProvider
+
+%% ===== Memory and context =====
+class MemoryManager {
+  -database: DatabaseController
+  -context_provider: IContextProvider
+  +build_context(conversation_id, user_message) async ContextBundle
+  +record_exchange(user_msg, assistant_msg) async
+}
+
+class IContextProvider {
+  <<interface>>
+  +build_context(query, conversation_id) async ContextBundle
+}
+
+class ConversationWindowProvider {
+  -database: DatabaseController
+  -window: int
+}
+
+class RAGContextProvider {
+  <<optional package>>
+}
+
+%% ===== Character =====
+class ExpressionManager {
+  -config: GfConfig
+  +resolve(expression_id) str
+  +asset_path(expression_id) Path
+}
+
+%% ===== Domain models =====
+class Message {
+  +id: str
+  +conversation_id: str
+  +role: Role
+  +content: str
+  +created_at: datetime
+}
+
+class GenerationRequest {
+  +messages: list~Message~
+  +model: str
+  +params: dict
+  +metadata: dict
+}
+
+class GenerationResponse {
+  +content: str
+  +usage: dict
+  +metadata: dict
+}
+
+class StreamEvent {
+  <<union>>
+  TextDelta
+  Done
+  Error
+}
+
+class ContextBundle {
+  +messages: list~Message~
+  +memories: list~Memory~
+}
+
+class CharacterResponse {
+  +text: str
+  +expression: str
+}
+
+%% ===== Errors =====
+class CompanionError {
+  <<exception>>
+}
+class ProviderError
+class GenerationTimeoutError
+class StorageError
+class ConfigError
+class InvalidExpressionError
+
+%% ===== Assistant tools (post-MVP) =====
+class ITool {
+  <<interface>>
+  +name: str
+  +description: str
+  +args_schema: type
+  +requires_permission: bool
+  +run(args) async ToolResult
+}
+
+class ToolRegistry {
+  +register(tool)
+  +get(name) ITool
+}
+
+%% ===== Adapters (outside the core) =====
+class FastAPIAdapter {
+  +chat_endpoint()
+  +stream_endpoint()
+}
+
+class QtDesktopAdapter {
+  +run()
+}
+
+class UIBuilder {
+  +build(pipeline, config) QApplication
+}
+
+%% ===== Relations: assembly =====
+CompositionRoot ..> Settings : reads
+CompositionRoot ..> GfConfig : reads
+CompositionRoot ..> AIProviderFactory : uses
+CompositionRoot ..> DatabaseFactory : uses
+CompositionRoot ..> GfPipeline : assembles
+
+%% ===== Relations: core =====
+GfPipeline --> GfConfig : reads
+GfPipeline --> AIController
+GfPipeline --> MemoryManager
+GfPipeline --> ExpressionManager
+
+AIController --> ILLMProvider : uses
+AIProviderFactory ..> ILLMProvider : creates
+ILLMProvider <|.. OllamaProvider
+ILLMProvider <|.. OpenAICompatibleProvider
+ILLMProvider <|.. FakeLLMProvider
+
+DatabaseController --> IDatabaseProvider : uses
+DatabaseFactory ..> IDatabaseProvider : creates
+IDatabaseProvider <|.. SQLiteProvider
+IDatabaseProvider <|.. InMemoryDatabaseProvider
+
+MemoryManager --> DatabaseController : uses
+MemoryManager --> IContextProvider : uses
+IContextProvider <|.. ConversationWindowProvider
+IContextProvider <|.. RAGContextProvider
+ConversationWindowProvider --> DatabaseController : reads history
+
+ExpressionManager --> GfConfig : validates against
+
+%% ===== Relations: models =====
+AIController ..> GenerationRequest
+AIController ..> GenerationResponse
+ILLMProvider ..> StreamEvent
+GfPipeline ..> CharacterResponse
+IContextProvider ..> ContextBundle
+GenerationRequest o-- Message
+ContextBundle o-- Message
+
+%% ===== Relations: errors =====
+CompanionError <|-- ProviderError
+CompanionError <|-- StorageError
+CompanionError <|-- ConfigError
+CompanionError <|-- InvalidExpressionError
+ProviderError <|-- GenerationTimeoutError
+
+%% ===== Relations: tools =====
+ToolRegistry o-- ITool
+
+%% ===== Relations: adapters =====
+FastAPIAdapter ..> GfPipeline : consumes
+QtDesktopAdapter ..> GfPipeline : consumes
+QtDesktopAdapter --> UIBuilder : uses
+
+note for ITool "Placeholder for the local assistant (post-MVP)"
+note for RAGContextProvider "Wrapper around the existing RAG project; separate optional package"
+note for UIBuilder "Lives in adapters/qt_desktop, not in the core"

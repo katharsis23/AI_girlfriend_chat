@@ -1,0 +1,87 @@
+[project]
+name = "ai-girlfriend"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "katharsis23",email = "daniklv2006@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi (>=0.143.0,<0.144.0)",
+    "uvicorn (>=0.54.0,<0.55.0)",
+    "pydantic (>=2.14.0,<3.0.0)",
+    "pydantic-settings (>=2.15.0,<3.0.0)",
+    "httpx (>=0.28.1,<0.29.0)"
+]
+
+[tool.poetry]
+packages = [{include = "ai_girlfriend", from = "src"}]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest-cov (>=7.1.0,<8.0.0)",
+    "pytest (>=9.1.1,<10.0.0)",
+    "ruff (>=0.17.0,<0.18.0)",
+    "mypy (>=2.4.0,<3.0.0)",
+    "pytest-asyncio (>=1.4.0,<2.0.0)",
+    "invoke (>=3.0.3,<4.0.0)"
+]
+
+
+
+# =========== Ruff Config ============
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+indent-width = 4
+
+# Cleaned up list of relevant exclusions
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "build",
+    "dist",
+    "venv",
+]
+
+[tool.ruff.lint]
+# Selected Rules optimized for FastAPI & Modern Python:
+# E/W = pycodestyle, F = Pyflakes, I = isort, B = Bugbear, UP = PyUpgrade
+# N = PEP8 Naming, ASYNC = Asyncio linting, RUF = Ruff-specific rules
+select = ["E", "W", "F", "I", "B", "UP", "N", "ASYNC", "RUF"]
+ignore = [
+    "E501",   # Ignore line-too-long (handled cleanly by ruff format)
+    "RUF012",
+]
+
+fixable = ["ALL"]
+unfixable = []
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.per-file-ignores]
+# Ignore unused imports in init files (common for package exports)
+"__init__.py" = ["F401"]
+# Allow asset statements and ignore naming conventions in unit tests
+"tests/**/*.py" = ["S101", "N802", "N806"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+# Automatically formats Python snippets hidden inside your docstrings!
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+
+
+# +======== Pytest ==============
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
