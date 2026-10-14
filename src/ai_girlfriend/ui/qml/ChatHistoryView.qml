@@ -101,6 +101,7 @@ Page {
         Label {
             Layout.alignment: Qt.AlignHCenter
             text: "🕘"
+            color: Theme.onSurfaceVariant
             font.pixelSize: 48
         }
         Label {

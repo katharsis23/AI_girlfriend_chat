@@ -61,6 +61,7 @@ Page {
                         Layout.preferredHeight: 72
                         expression: item.info.expression
                         source: item.info.thumb
+                        emoji: item.info.emoji
                     }
                     ColumnLayout {
                         Layout.fillWidth: true

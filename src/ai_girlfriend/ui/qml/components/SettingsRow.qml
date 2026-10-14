@@ -30,7 +30,7 @@ AbstractButton {
             Layout.preferredHeight: 44
             radius: 22
             color: Theme.surfaceVariant
-            Text { anchors.centerIn: parent; text: row.glyph; font.pixelSize: 20 }
+            Text { anchors.centerIn: parent; text: row.glyph; color: Theme.onSurface; font.pixelSize: 20 }
         }
         ColumnLayout {
             Layout.fillWidth: true

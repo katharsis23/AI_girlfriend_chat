@@ -8,6 +8,7 @@ Item {
     property string greeting: ""
     property string expression: "neutral"
     property string source: ""
+    property string emoji: ""
     property bool showPortrait: true
 
     ColumnLayout {
@@ -22,6 +23,7 @@ Item {
             Layout.preferredHeight: 140
             expression: root.expression
             source: root.source
+            emoji: root.emoji
         }
         Label {
             Layout.fillWidth: true

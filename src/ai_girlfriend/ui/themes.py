@@ -1,6 +1,25 @@
-"""Role-based Material 3 tokens (spec §5). Hex values are placeholders for the design pass."""
+"""Role-based Material 3 tokens (spec §5).
+
+Every theme — built-in or custom — is a mapping with three keys::
+
+    {
+        "name":   "Human readable name",
+        "dark":   True | False,               # drives Material.theme
+        "colors": {<token>: "#RRGGBB", ...},  # one entry per REQUIRED_TOKENS
+    }
+
+The ``colors`` mapping must use the *Material 3 role names* (``background``,
+``surfaceVariant``, ``primary``, ``onPrimary``, ``onSurface`` …) because that is
+what :mod:`Theme.qml` binds to and what ``SettingsBackend.themeInfo`` reads.
+Historically the built-in themes used ad-hoc keys (``bg``, ``accent`` …) while
+QML looked up the M3 role names, so every role resolved to ``undefined`` — which
+QML paints as black. The tokens below are the single source of truth and the
+built-ins are authored against them directly.
+"""
 
 from __future__ import annotations
+
+from typing import Any
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
@@ -29,78 +48,158 @@ REQUIRED_TOKENS = [
 # from this sibling instead of invalidating the whole theme (see themes_store).
 OPTIONAL_TOKEN_DEFAULTS = {"text": "onSurface"}
 
-THEMES: dict[str, dict] = {
-    "rose": {
-        "name": "Rose",
-        "dark": True,
-        "colors": {
-            "background": "#1E1418",
-            "surface": "#2A1D23",
-            "surfaceVariant": "#3B2A32",
-            "primary": "#FFB1C8",
-            "onPrimary": "#5E1133",
-            "secondary": "#E3BDC6",
-            "tertiary": "#EFBD94",
-            "onSurface": "#F2DEE2",
-            "onSurfaceVariant": "#D6C2C7",
-            "text": "#F2DEE2",
-            "outline": "#9F8C91",
-            "error": "#FFB4AB",
-            "onError": "#690005",
-            "userBubble": "#7B2D4C",
-            "onUserBubble": "#FFD9E3",
-            "assistantBubble": "#3B2A32",
-            "onAssistantBubble": "#F2DEE2",
-        },
-    },
-    "mint": {
-        "name": "Mint",
-        "dark": False,
-        "colors": {
-            "background": "#F4FBF7",
-            "surface": "#FFFFFF",
-            "surfaceVariant": "#DBE5DE",
-            "primary": "#006C4C",
+
+def _theme(name: str, dark: bool, colors: dict[str, str]) -> dict[str, Any]:
+    """Build a fully-populated theme record from a partial color mapping.
+
+    Missing required tokens are backfilled from sensible siblings so a single
+    omission never leaves a role ``undefined`` (which QML renders as black).
+    """
+    resolved = dict(colors)
+    fallback = {
+        "background": resolved.get("surface", "#101010"),
+        "surface": resolved.get("background", "#181818"),
+        "surfaceVariant": resolved.get("surface", "#222222"),
+        "primary": resolved.get("secondary", "#7C4DFF"),
+        "onPrimary": "#FFFFFF",
+        "secondary": resolved.get("primary", "#9A7BFF"),
+        "tertiary": resolved.get("secondary", "#FF7BAC"),
+        "onSurface": resolved.get("text", "#F5F5F5"),
+        "onSurfaceVariant": resolved.get("text", "#C4C4C4"),
+        "text": resolved.get("onSurface", "#F5F5F5"),
+        "outline": resolved.get("surfaceVariant", "#4A4A4A"),
+        "error": "#F07178",
+        "onError": "#FFFFFF",
+        "userBubble": resolved.get("primary", "#333355"),
+        "onUserBubble": resolved.get("onPrimary", "#FFFFFF"),
+        "assistantBubble": resolved.get("surfaceVariant", "#222222"),
+        "onAssistantBubble": resolved.get("onSurface", "#F5F5F5"),
+    }
+    for token in REQUIRED_TOKENS:
+        if not resolved.get(token):
+            resolved[token] = fallback[token]
+    return {"name": name, "dark": dark, "colors": resolved}
+
+
+# Built-in themes, authored directly against the M3 role tokens above.
+THEMES: dict[str, Any] = {
+    "crimson_cathedral": _theme(
+        "Crimson Cathedral",
+        True,
+        {
+            "background": "#100B10",
+            "surface": "#25151E",
+            "surfaceVariant": "#351D2A",
+            "primary": "#C54B70",
             "onPrimary": "#FFFFFF",
-            "secondary": "#4C6358",
-            "tertiary": "#3D6373",
-            "onSurface": "#171D1A",
-            "onSurfaceVariant": "#404943",
-            "text": "#171D1A",
-            "outline": "#707973",
-            "error": "#BA1A1A",
+            "secondary": "#E16B8D",
+            "tertiary": "#FFB4A8",
+            "onSurface": "#F2E8EE",
+            "onSurfaceVariant": "#BBA8B5",
+            "text": "#F2E8EE",
+            "outline": "#513043",
+            "error": "#F07178",
             "onError": "#FFFFFF",
-            "userBubble": "#9CF2CB",
-            "onUserBubble": "#002114",
-            "assistantBubble": "#E3EBE5",
-            "onAssistantBubble": "#171D1A",
+            "userBubble": "#492033",
+            "onUserBubble": "#F2E8EE",
+            "assistantBubble": "#20151F",
+            "onAssistantBubble": "#F2E8EE",
         },
-    },
-    "midnight": {
-        "name": "Midnight",
-        "dark": True,
-        "colors": {
-            "background": "#000000",
-            "surface": "#0D1117",
-            "surfaceVariant": "#1B2230",
-            "primary": "#A8C8FF",
-            "onPrimary": "#00315F",
-            "secondary": "#BCC7DC",
-            "tertiary": "#DABCE2",
-            "onSurface": "#FFFFFF",
-            "onSurfaceVariant": "#C4C6D0",
-            "text": "#FFFFFF",
-            "outline": "#8E9099",
-            "error": "#FFB4AB",
-            "onError": "#690005",
-            "userBubble": "#1D4ED8",
-            "onUserBubble": "#FFFFFF",
-            "assistantBubble": "#1B2230",
-            "onAssistantBubble": "#FFFFFF",
+    ),
+    "obsidian_protocol": _theme(
+        "Obsidian Protocol",
+        True,
+        {
+            "background": "#0B0D10",
+            "surface": "#171B21",
+            "surfaceVariant": "#222832",
+            "primary": "#9AAFC5",
+            "onPrimary": "#10151C",
+            "secondary": "#C3D2E2",
+            "tertiary": "#8FB8D8",
+            "onSurface": "#E5EAF0",
+            "onSurfaceVariant": "#9BA7B5",
+            "text": "#E5EAF0",
+            "outline": "#343C48",
+            "error": "#F07178",
+            "onError": "#10151C",
+            "userBubble": "#293441",
+            "onUserBubble": "#E5EAF0",
+            "assistantBubble": "#15191F",
+            "onAssistantBubble": "#E5EAF0",
         },
-    },
+    ),
+    "ghost_terminal": _theme(
+        "Ghost Terminal",
+        True,
+        {
+            "background": "#050806",
+            "surface": "#101A13",
+            "surfaceVariant": "#17251B",
+            "primary": "#58FF91",
+            "onPrimary": "#00120A",
+            "secondary": "#9AFFB8",
+            "tertiary": "#E8D66D",
+            "onSurface": "#D8FFE2",
+            "onSurfaceVariant": "#83B895",
+            "text": "#D8FFE2",
+            "outline": "#284632",
+            "error": "#FF7474",
+            "onError": "#2A0000",
+            "userBubble": "#193523",
+            "onUserBubble": "#D8FFE2",
+            "assistantBubble": "#0B120D",
+            "onAssistantBubble": "#D8FFE2",
+        },
+    ),
+    "seaside_morning": _theme(
+        "Seaside Morning",
+        False,
+        {
+            "background": "#F4F7FB",
+            "surface": "#FFFFFF",
+            "surfaceVariant": "#E4EBF3",
+            "primary": "#1E6FB8",
+            "onPrimary": "#FFFFFF",
+            "secondary": "#3F8FCB",
+            "tertiary": "#5BA8C4",
+            "onSurface": "#1A2530",
+            "onSurfaceVariant": "#5A6B7B",
+            "text": "#1A2530",
+            "outline": "#B8C4D2",
+            "error": "#C0392B",
+            "onError": "#FFFFFF",
+            "userBubble": "#D6E8FA",
+            "onUserBubble": "#12314F",
+            "assistantBubble": "#EAEFF5",
+            "onAssistantBubble": "#1A2530",
+        },
+    ),
+    "blush": _theme(
+        "Blush",
+        False,
+        {
+            "background": "#FBF5F7",
+            "surface": "#FFFFFF",
+            "surfaceVariant": "#F3E1E8",
+            "primary": "#B83B6A",
+            "onPrimary": "#FFFFFF",
+            "secondary": "#D96C94",
+            "tertiary": "#C98A5B",
+            "onSurface": "#3A1F29",
+            "onSurfaceVariant": "#7A5A66",
+            "text": "#3A1F29",
+            "outline": "#D8B9C4",
+            "error": "#C0392B",
+            "onError": "#FFFFFF",
+            "userBubble": "#F8D7E2",
+            "onUserBubble": "#4A1E2E",
+            "assistantBubble": "#F1EAEE",
+            "onAssistantBubble": "#3A1F29",
+        },
+    ),
 }
-DEFAULT_THEME = "rose"
+DEFAULT_THEME = "crimson_cathedral"
 
 
 class ThemeController(QObject):

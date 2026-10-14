@@ -22,7 +22,8 @@ def _valid_colors() -> dict:
 def test_theme_store_roundtrip(tmp_path):
     store = ThemeStore(tmp_path / "themes.json")
     themes = {
-        "rose": {"name": "Rose", "dark": True, "colors": _valid_colors()},  # built-in
+        # Not flagged ``custom`` -> treated like a built-in, never persisted.
+        "rose": {"name": "Rose", "dark": True, "colors": _valid_colors()},
         "custom-x": {
             "name": "Custom X",
             "dark": False,
@@ -58,8 +59,9 @@ def test_theme_store_missing_file_is_empty(tmp_path):
 
 
 def test_theme_store_validate_rejects_builtin_id():
+    builtin_id = next(iter(THEMES))
     with pytest.raises(ThemeStoreError):
-        ThemeStore.validate("rose", "Rose", _valid_colors())
+        ThemeStore.validate(builtin_id, "Copy of builtin", _valid_colors())
 
 
 # --- ThemeController ---------------------------------------------------
@@ -83,8 +85,12 @@ def test_theme_controller_saves_and_deletes_custom(tmp_path):
 
 def test_theme_controller_refuses_to_overwrite_builtin():
     controller = ThemeController()
-    assert controller.saveCustomTheme("rose", "Rose too", True, _valid_colors()) == ""
-    assert controller.themes["rose"]["colors"] == THEMES["rose"]["colors"]
+    builtin_id = next(iter(THEMES))
+    assert (
+        controller.saveCustomTheme(builtin_id, "Copy of builtin", True, _valid_colors())
+        == ""
+    )
+    assert controller.themes[builtin_id]["colors"] == THEMES[builtin_id]["colors"]
 
 
 # --- CharacterStore ----------------------------------------------------

@@ -12,7 +12,10 @@ Item {
     id: root
     property string expression: "neutral"
     property string source: ""
-
+    // Per-character emoji fallback. When empty we fall back to the expression
+    // map below, so callers that don't know a character-specific emoji keep
+    // working while distinct characters can be given distinct avatars.
+    property string emoji: ""
     property string shown: expression
     property string shownSource: source
 
@@ -23,6 +26,15 @@ Item {
         "neutral": "🙂", "happy": "😊", "shy": "😳", "thinking": "🤔", "sad": "😢",
         "surprised": "😮", "angry": "😠", "love": "😍", "sleepy": "😴", "smile": "😊"
     })
+
+    // Resolve the displayed emoji: an explicit per-character emoji wins, then
+    // the expression map, then a neutral default.
+    function resolveEmoji(expr, emoji) {
+        if (emoji !== undefined && emoji !== null && String(emoji).length > 0)
+            return String(emoji)
+        var mapped = root.emojiMap[expr]
+        return mapped !== undefined ? mapped : "🙂"
+    }
 
     readonly property bool hasImage: shownSource !== "" && photo.status === Image.Ready
 
@@ -108,8 +120,8 @@ Item {
         Text {
             anchors.centerIn: parent
             visible: !root.hasImage
-            text: root.emojiMap[root.shown] !== undefined ? root.emojiMap[root.shown] : "🙂"
+            text: root.resolveEmoji(root.shown, root.emoji)
             font.pixelSize: root.width * 0.46
+        }
     }
-}
 }

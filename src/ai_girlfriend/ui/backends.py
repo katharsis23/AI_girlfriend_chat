@@ -133,6 +133,84 @@ def _expression_url(character: Any, expression: str, pipeline: Any = None) -> st
     return ""
 
 
+# Distinct fallback emojis so characters without any image asset still get a
+# visually unique avatar (previously every character shared one emoji).
+_CHARACTER_EMOJIS = [
+    "🙂",
+    "😊",
+    "😳",
+    "🤔",
+    "😢",
+    "😮",
+    "😠",
+    "😍",
+    "😴",
+    "🤗",
+    "😎",
+    "🥰",
+    "😇",
+    "🤭",
+    "🙃",
+    "😌",
+    "🧐",
+    "😺",
+    "🦊",
+    "🐱",
+]
+
+
+def _character_emoji(character_id: str) -> str:
+    """Deterministic emoji keyed by the character id (stable across restarts)."""
+    if not character_id:
+        return _CHARACTER_EMOJIS[0]
+    idx = sum(ord(ch) for ch in character_id) % len(_CHARACTER_EMOJIS)
+    return _CHARACTER_EMOJIS[idx]
+
+
+def _character_thumb(character: Any, expression: str) -> str:
+    """Resolve a character's *own* portrait URL for a picker thumbnail.
+
+    Unlike :func:`_expression_url`, this never routes through a pipeline — a
+    picker lists every character, but only the current one has a live pipeline.
+    Using the current pipeline here made every card show the *active*
+    character's image (or the same shared emoji). We resolve the target
+    character's own ``photo_emoji_map`` directly; relative paths are tried
+    against the character's known ``base_dir`` when one is available.
+
+    Returns ``''`` when nothing usable exists, so QML shows the per-character
+    emoji fallback instead.
+    """
+    raw_map = dict(getattr(character, "photo_emoji_map", None) or {})
+    initial = getattr(character, "initial_expression", None)
+
+    candidates: list[str] = []
+    for candidate in (expression, initial, "default"):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    for candidate in raw_map:
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    base_dir = getattr(character, "base_dir", None)
+    try:
+        from pathlib import Path as _Path
+
+        base_path = _Path(base_dir) if base_dir else None
+    except Exception:
+        base_path = None
+
+    for candidate_id in candidates:
+        raw = raw_map.get(candidate_id)
+        if not raw:
+            continue
+        path = Path(str(raw)).expanduser()
+        if not path.is_absolute() and base_path is not None:
+            path = base_path / path
+        if _is_image(path):
+            return _url_for_path(path)
+    return ""
+
+
 class ChatBackend(QObject):
     busyChanged = Signal(bool)
     messageAppended = Signal(str, str)  # role, text
@@ -174,6 +252,15 @@ class ChatBackend(QObject):
     @Property(str, notify=characterChanged)
     def initialExpression(self):
         return getattr(self._character, "initial_expression", "neutral") or "neutral"
+
+    @Property(str, notify=characterChanged)
+    def portraitEmoji(self):
+        """Per-character emoji for the active portrait when it has no image asset.
+
+        Distinct characters get distinct avatars even without photo assets, so
+        the active chat portrait matches the character's picker card.
+        """
+        return _character_emoji(getattr(self._character, "character_id", ""))
 
     # --- slots ----------------------------------------------------------
     @Slot(str)
@@ -505,14 +592,19 @@ class SettingsBackend(QObject):
         t = self._theme.themes.get(theme_id) or THEMES.get(theme_id)
         if t is None:
             return {}
-        c = t["colors"]
+        # Read through the resolved map so every role is present and never
+        # ``undefined`` (which QML paints as black).
+        c = self._theme.resolved_colors(theme_id) or t["colors"]
         return {
             "name": t["name"],
-            "dark": t["dark"],
+            "dark": bool(t.get("dark", True)),
             "custom": bool(t.get("custom")),
-            "primary": c["primary"],
-            "secondary": c["secondary"],
-            "background": c["background"],
+            "primary": c.get("primary", ""),
+            "secondary": c.get("secondary", ""),
+            "tertiary": c.get("tertiary", ""),
+            "background": c.get("background", ""),
+            "surface": c.get("surface", ""),
+            "onSurface": c.get("onSurface", ""),
         }
 
     @Slot(str, result="QVariantMap")
@@ -531,7 +623,10 @@ class SettingsBackend(QObject):
             "temperature": "" if temperature is None else temperature,
             "max_tokens": "" if max_tokens is None else max_tokens,
             "custom": character_id not in self._built_in_ids,
-            "thumb": _expression_url(c, expr, self._chat._pipeline),
+            # Resolution must use the *target* character's own assets, not the
+            # currently-active pipeline (which would make every card identical).
+            "thumb": _character_thumb(c, expr),
+            "emoji": _character_emoji(character_id),
         }
 
     # --- internals ------------------------------------------------------

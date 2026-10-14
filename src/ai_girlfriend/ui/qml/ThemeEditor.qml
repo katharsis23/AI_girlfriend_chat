@@ -98,6 +98,15 @@ Page {
                 Switch {
                     text: qsTr("Dark")
                     checked: view.draftDark
+                    // Relying on the Material default left this text black in
+                    // the dark theme; bind it to the role explicitly.
+                    contentItem: Text {
+                        text: parent.text
+                        color: Theme.onSurface
+                        font: parent.font
+                        verticalAlignment: Text.AlignVCenter
+                        opacity: parent.enabled ? 1.0 : 0.5
+                    }
                     onToggled: view.draftDark = checked
                 }
             }
@@ -184,6 +193,16 @@ Page {
             Button {
                 visible: view.isEditing
                 text: qsTr("Delete")
+                // Explicit text color: the Material default rendered black in
+                // the dark theme because it isn't bound to our Theme tokens.
+                contentItem: Text {
+                    text: parent.text
+                    color: Theme.onSurface
+                    font: parent.font
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    opacity: parent.enabled ? 1.0 : 0.5
+                }
                 onClicked: {
                     if (Backends.settings.deleteTheme(view.themeId)) {
                         view.StackView.view.pop()
@@ -194,6 +213,14 @@ Page {
             Button {
                 text: qsTr("Save")
                 highlighted: true
+                contentItem: Text {
+                    text: parent.text
+                    color: Theme.onPrimary
+                    font: parent.font
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    opacity: parent.enabled ? 1.0 : 0.5
+                }
                 onClicked: {
                     var id = view.themeId.length > 0
                              ? view.themeId

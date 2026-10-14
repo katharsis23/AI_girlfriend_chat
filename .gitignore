@@ -15,3 +15,5 @@ config.json
 ai_girlfriend.db
 characters.json
 themes.json
+
+.coverage

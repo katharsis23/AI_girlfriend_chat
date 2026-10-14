@@ -116,3 +116,4 @@ markers = [
     "contract: providers conform to their contracts",
     "integration: pipeline with real dependencies (SQLite, Ollama)",
 ]
+addopts = "--cov=src --cov-report=term-missing --cov-report=html"

@@ -246,6 +246,14 @@ Page {
                 }
                 Button {
                     text: qsTr("Add")
+                    contentItem: Text {
+                        text: parent.text
+                        color: Theme.onSurface
+                        font: parent.font
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        opacity: parent.enabled ? 1.0 : 0.5
+                    }
                     onClicked: {
                         if (newExprId.text.length > 0 && newExprPath.text.length > 0) {
                             var p = Object.assign({}, view.draftPhotos)
@@ -283,6 +291,14 @@ Page {
                 visible: view.isEditing
                 text: qsTr("Delete")
                 enabled: !Backends.settings.busy
+                contentItem: Text {
+                    text: parent.text
+                    color: Theme.onSurface
+                    font: parent.font
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    opacity: parent.enabled ? 1.0 : 0.5
+                }
                 onClicked: {
                     if (Backends.settings.deleteCharacter(view.characterId)) {
                         view.StackView.view.pop()
@@ -296,6 +312,14 @@ Page {
                 text: qsTr("Save")
                 highlighted: true
                 enabled: !Backends.settings.busy
+                contentItem: Text {
+                    text: parent.text
+                    color: Theme.onPrimary
+                    font: parent.font
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    opacity: parent.enabled ? 1.0 : 0.5
+                }
                 onClicked: {
                     var payload = {
                         "name": view.draftName,

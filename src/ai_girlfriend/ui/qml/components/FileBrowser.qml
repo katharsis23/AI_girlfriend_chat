@@ -110,6 +110,7 @@ Dialog {
                         spacing: 10
                         Text {
                             text: modelData.isDir ? "📁" : "🖼️"
+                            color: Theme.onSurface
                             font.pixelSize: Theme.fontSizeM
                         }
                         Label {
@@ -136,6 +137,14 @@ Dialog {
             Item { Layout.fillWidth: true }
             Button {
                 text: qsTr("Cancel")
+                contentItem: Text {
+                    text: parent.text
+                    color: Theme.onSurface
+                    font: parent.font
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    opacity: parent.enabled ? 1.0 : 0.5
+                }
                 onClicked: dialog.close()
             }
         }

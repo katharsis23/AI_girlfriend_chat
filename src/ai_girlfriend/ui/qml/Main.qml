@@ -21,10 +21,9 @@ ApplicationWindow {
     Material.accent: Theme.primary
     Material.primary: Theme.surface
     Material.background: Theme.background
-    // Foreground decides the default text color for *all* controls; bind every
-    // related role so nothing falls back to the style's default (black) text.
-    // `foreground` is the writable role that drives default control text color;
-    // the *TextColor roles are read-only reflections of it.
+    // Foreground decides the default text color for *all* controls; bind it so
+    // no control falls back to the style's default (black) text in a dark theme.
+    // (The *_TextColor roles are read-only reflections of `foreground`.)
     Material.foreground: Theme.text
 
     Behavior on color { ColorAnimation { duration: Theme.durationMedium } }

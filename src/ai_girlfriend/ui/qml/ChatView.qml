@@ -75,6 +75,7 @@ Page {
                     Layout.preferredHeight: Math.min(parent.width, 260)
                     expression: view.currentExpression
                     source: Backends.chat.expressionUrl(view.currentExpression)
+                    emoji: Backends.chat.portraitEmoji
                 }
                 Label {
                     Layout.alignment: Qt.AlignHCenter
@@ -143,6 +144,7 @@ Page {
                     greeting: Backends.chat.greeting
                     expression: view.currentExpression
                     source: Backends.chat.expressionUrl(view.currentExpression)
+                    emoji: Backends.chat.portraitEmoji
                     showPortrait: !view.wide
                 }
             }

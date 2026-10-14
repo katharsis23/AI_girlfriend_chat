@@ -5,6 +5,8 @@
   "LLM_API_KEY": null,
   "CONTEXT_WINDOW": 20,
   "REQUEST_TIMEOUT": 120.0,
+  "TEMPERATURE": 0.8,
+  "MAX_TOKENS": 512,
   "DATABASE_PROVIDER": "sqlite",
   "DATABASE_URL": "sqlite:///./ai_girlfriend.db",
   "CHARACTERS": [
@@ -18,6 +20,8 @@
         "sad": "expressions/sad.png"
       },
       "initial_expression": "default",
+      "temperature": 0.8,
+      "max_tokens": 512,
       "schema_version": 1
     }
   ]
