@@ -1,31 +1,63 @@
-# Companion Framework — Architecture Specification
+# AI Girlfriend / Companion Framework — Architecture Specification
 
-**Status:** architecture proposal, revision 2  
-**Implementation language:** Python  
-**Main technologies:** Pydantic / pydantic-settings, `typing.Protocol`, SQLite, Ollama, FastAPI (temporary adapter), PySide6/Qt (future desktop adapter)  
-**Development tooling:** invoke, pytest, ruff, pre-commit, GitHub Actions (planned)
+**Status:** implementation-aligned specification, revision 3
+**Implementation language:** Python (>= 3.13)
+**Main technologies:** Pydantic / pydantic-settings, `typing.Protocol`, SQLite (`aiosqlite`), httpx, Ollama & OpenAI-compatible HTTP APIs, FastAPI, PySide6/Qt (QML)
+**Development tooling:** Poetry, invoke, pytest, ruff, pre-commit
 
-## What changed compared to revision 1
+> This document describes the system **as implemented**. The class diagram lives in
+> [`companion_class_diagram.mmd`](./companion_class_diagram.mmd) and the runtime
+> scenarios (prompt, streaming, chat loading, bot creation, startup) live in
+> [`flows.md`](./flows.md).
 
-- `UIBuilder` moved out of the core into the Qt adapter: the core does not import PySide6.
-- Added a **composition root** (`build_pipeline`): factories are used only there; controllers receive ready-made providers.
-- `GfPipeline` depends on `MemoryManager` rather than directly on `IContextProvider`; `MemoryManager` is the single point for context handling and exchange persistence.
-- `ExpressionManager` became a stateless validator; the active emotion belongs to the conversation/client, not to global state.
-- Streaming generation has a typed contract (`StreamEvent`).
-- Added a domain error hierarchy, an `ITool` contract (a placeholder for the local assistant), and fakes for tests.
-- Added a development tooling section and an early Stage 0 (project skeleton).
+## What changed compared to revision 2
+
+Revision 2 was an architecture **proposal**; the codebase has since diverged. This
+revision records the deltas so the docs match the code:
+
+- The project is packaged as `ai_girlfriend` (package root `src/ai_girlfriend`).
+- **Configuration** is a single `Config` (pydantic-settings) read from `config.json`;
+  it also embeds the list of characters as `CharacterInfo` models. `Settings` and a
+  separate `GfConfig` class no longer exist.
+- **Character** model is `CharacterInfo`; the spec-facing accessors `character_id`,
+  `system_prompt`, `expressions`, `available_emotions` and `generation_params()` are
+  derived properties/methods, not separate fields.
+- **LLM** contracts live in `models/llm.py` (`ILLMProvider`, `GenerationRequest`,
+  `GenerationResponse`, `Message`, `Role`); the factory is `LLMProviderFactory`
+  (methods `create_provider`), and concrete providers are `OllamaProvider` and
+  `DeepSeekProvider` (no `OpenAICompatibleProvider`).
+- **Storage** contract keeps its low-level name `IDatabaseStorage` (not
+  `IDatabaseProvider`); the table key is `chat_id`, and the provider exposes
+  `create_chat`, `save_message`, `save_exchange`, `get_recent_messages`,
+  `list_chats`, `get_messages`.
+- **Context** contract is `IContextProvider.build_context(query, chat_id)`; the default
+  provider is `ConversationWindowProvider`.
+- **Pipeline lifecycle** uses `init()` / `close()` (not `initialize()`). `chat()` and
+  `stream_chat()` accept an optional `chat_id: UUID | None` and lazily create a chat.
+- The public facade gained read-only history helpers: `list_chats()` and
+  `get_messages()`.
+- **Transport** is the FastAPI adapter in `main.py` with four endpoints
+  (`/chat`, `/chat/{chat_id}/message`, `/chat/{chat_id}`, `/chat/{chat_id}/stream`).
+- The **desktop UI** is a QML/PySide6 application (`ui/`) with an `AsyncWorker`
+  QThread bridge, `ChatBackend` / `SettingsBackend` / `FileSystemBackend` QObjects,
+  and a theme + character persistence layer (`ThemeStore`, `CharacterStore`).
+- The widget-based adapter (`ui_builder/`) is a secondary, simpler Qt path; the QML
+  UI is the primary desktop experience.
+- **Streaming contract** is a Pydantic discriminated union in `models/events.py`
+  (`TextDelta | Done | Error`).
 
 ## 1. Project Goal
 
-Companion Framework is an independent Python library for building personal AI companions and local AI assistants. The initial scenario is a character with its own prompt, dialogue history, and visual emotions. The project is developed as a standalone module (including for a diploma thesis) with the prospect of being published as a library.
-
-The core must be reusable through different interfaces: first FastAPI, later a Qt GUI, a CLI, and other clients. The library must not depend on FastAPI or Qt in its base core: these are adapters that call the core's public API.
+The project is an independent Python library for building personal AI companions and
+local AI assistants. The primary scenario is a character with its own prompt, dialogue
+history, and visual emotions. The core is reusable through different interfaces
+(currently FastAPI and a Qt/QML desktop app) and must not depend on any of them.
 
 ### Goals
 
 - Separate domain logic, configuration, providers, and interfaces.
 - Support swapping LLM and database providers through stable contracts.
-- Store dialogue history and reserve space for long-term memory and RAG (including integration with the existing RAG project).
+- Store dialogue history and reserve space for long-term memory and RAG.
 - Separate the character's state/emotion from the text generation mechanism.
 - Allow the core to be used without a graphical interface.
 - Support testing components through substitutable implementations of the contracts.
@@ -36,699 +68,369 @@ The core must be reusable through different interfaces: first FastAPI, later a Q
 - Autonomous execution of arbitrary operating system commands.
 - Mandatory RAG integration before the first MVP.
 - Implementing assistant tools (the MVP has only a placeholder contract).
-- Permanent lock-in to a single LLM provider, a single GUI, or a single configuration format.
-- A complex plugin system with dynamic loading of third-party code.
+- Permanent lock-in to a single LLM provider, a single GUI, or a single config format.
 
 ## 2. Architectural Principles
 
-1. **The core does not depend on the UI.** Qt and FastAPI import the core; the core does not import them.
-2. **Dependencies point inward.** Domain models and contracts do not depend on concrete adapters.
-3. **Providers are adapters.** `OllamaProvider` implements `ILLMProvider`; `SQLiteProvider` implements `IDatabaseProvider`.
-4. **Factories create, controllers use.** Factories are called only in the composition root. Controllers receive ready-made providers in their constructors.
-5. **The pipeline is a facade, not a "god object".** It coordinates services and lifecycle, but contains no SQL, HTTP code, or Qt window-building logic.
-6. **Configuration is split by purpose.** Runtime settings and character configuration use different models.
-7. **RAG is an optional context adapter.** The base scenario works with a window of recent messages.
-8. **Asynchronous operations do not block the UI.** Network calls and generation are not executed synchronously in the Qt event loop; blocking libraries (e.g. `sqlite3`) are moved to an executor or replaced with async ones.
-9. **Errors are typed.** Providers raise domain errors rather than raw library exceptions; adapters translate them into responses at their own level.
-10. **Abstraction only for a real point of substitution.** Every contract and layer has its own responsibility or is needed for independent testing.
+1. **The core does not depend on the UI.** Qt/FastAPI import the core; the core never
+   imports them (`import PySide6` / `import fastapi` are forbidden in the core).
+2. **Dependencies point inward.** Domain models and contracts do not depend on concrete
+   adapters.
+3. **Providers are adapters.** `OllamaProvider` / `DeepSeekProvider` implement
+   `ILLMProvider`; `SQLiteProvider` implements `IDatabaseStorage`.
+4. **Factories create, controllers use.** Factories are called only in the composition
+   root. Controllers receive ready-made providers through their constructors.
+5. **The pipeline is a facade, not a "god object".** It coordinates services and
+   lifecycle but contains no SQL, HTTP, or Qt/QML logic.
+6. **Configuration is split by purpose in one source.** Global runtime settings and
+   character profiles share one `config.json`, but map to distinct models
+   (`Config` vs `CharacterInfo`).
+7. **RAG is an optional context adapter.** The base scenario uses a window of recent
+   messages.
+8. **Asynchronous operations do not block the UI.** Blocking work runs on an asyncio
+   loop in its own thread (`AsyncWorker`); the Qt event loop is never blocked.
+9. **Errors are typed.** Providers raise domain errors; adapters translate them at
+   their own level.
+10. **Abstraction only for a real point of substitution.**
 
 ## 3. Class Diagram
 
-The diagram is written in Mermaid and renders in GitHub, GitLab, Obsidian, and editors with Mermaid support.
-
-```mermaid
-classDiagram
-direction TB
-
-%% ===== Configuration =====
-class Settings {
-  +llm_provider: str
-  +database_provider: str
-  +database_url: str
-  +model: str
-  +context_window: int
-  +request_timeout: float
-  +log_level: str
-}
-
-class GfConfig {
-  +character_id: str
-  +name: str
-  +system_prompt: str
-  +expressions: dict
-  +initial_expression: str
-}
-
-%% ===== Composition root =====
-class CompositionRoot {
-  +build_pipeline(settings, config) GfPipeline
-}
-
-%% ===== Facade =====
-class GfPipeline {
-  -config: GfConfig
-  -ai_controller: AIController
-  -memory_manager: MemoryManager
-  -expression_manager: ExpressionManager
-  +initialize() async
-  +chat(message, conversation_id) async CharacterResponse
-  +stream_chat(message, conversation_id) AsyncIterator~StreamEvent~
-  +close() async
-}
-
-%% ===== LLM =====
-class AIController {
-  -provider: ILLMProvider
-  +generate(request) async GenerationResponse
-  +stream(request) AsyncIterator~StreamEvent~
-}
-
-class AIProviderFactory {
-  +create(settings) ILLMProvider
-}
-
-class ILLMProvider {
-  <<interface>>
-  +generate(request) async GenerationResponse
-  +stream(request) AsyncIterator~StreamEvent~
-}
-
-class OllamaProvider
-class OpenAICompatibleProvider
-class FakeLLMProvider
-
-%% ===== Storage =====
-class DatabaseController {
-  -provider: IDatabaseProvider
-  +initialize() async
-  +create_conversation() async str
-  +save_exchange(user_msg, assistant_msg) async
-  +get_recent_messages(conversation_id, limit) async list~Message~
-  +close() async
-}
-
-class DatabaseFactory {
-  +create(settings) IDatabaseProvider
-}
-
-class IDatabaseProvider {
-  <<interface>>
-  +initialize() async
-  +create_conversation() async str
-  +save_message(message) async
-  +save_exchange(user_msg, assistant_msg) async
-  +get_recent_messages(conversation_id, limit) async list~Message~
-  +close() async
-}
-
-class SQLiteProvider
-class InMemoryDatabaseProvider
-
-%% ===== Memory and context =====
-class MemoryManager {
-  -database: DatabaseController
-  -context_provider: IContextProvider
-  +build_context(conversation_id, user_message) async ContextBundle
-  +record_exchange(user_msg, assistant_msg) async
-}
-
-class IContextProvider {
-  <<interface>>
-  +build_context(query, conversation_id) async ContextBundle
-}
-
-class ConversationWindowProvider {
-  -database: DatabaseController
-  -window: int
-}
-
-class RAGContextProvider {
-  <<optional package>>
-}
-
-%% ===== Character =====
-class ExpressionManager {
-  -config: GfConfig
-  +resolve(expression_id) str
-  +asset_path(expression_id) Path
-}
-
-%% ===== Domain models =====
-class Message {
-  +id: str
-  +conversation_id: str
-  +role: Role
-  +content: str
-  +created_at: datetime
-}
-
-class GenerationRequest {
-  +messages: list~Message~
-  +model: str
-  +params: dict
-  +metadata: dict
-}
-
-class GenerationResponse {
-  +content: str
-  +usage: dict
-  +metadata: dict
-}
-
-class StreamEvent {
-  <<union>>
-  TextDelta
-  Done
-  Error
-}
-
-class ContextBundle {
-  +messages: list~Message~
-  +memories: list~Memory~
-}
-
-class CharacterResponse {
-  +text: str
-  +expression: str
-}
-
-%% ===== Errors =====
-class CompanionError {
-  <<exception>>
-}
-class ProviderError
-class GenerationTimeoutError
-class StorageError
-class ConfigError
-class InvalidExpressionError
-
-%% ===== Assistant tools (post-MVP) =====
-class ITool {
-  <<interface>>
-  +name: str
-  +description: str
-  +args_schema: type
-  +requires_permission: bool
-  +run(args) async ToolResult
-}
-
-class ToolRegistry {
-  +register(tool)
-  +get(name) ITool
-}
-
-%% ===== Adapters (outside the core) =====
-class FastAPIAdapter {
-  +chat_endpoint()
-  +stream_endpoint()
-}
-
-class QtDesktopAdapter {
-  +run()
-}
-
-class UIBuilder {
-  +build(pipeline, config) QApplication
-}
-
-%% ===== Relations: assembly =====
-CompositionRoot ..> Settings : reads
-CompositionRoot ..> GfConfig : reads
-CompositionRoot ..> AIProviderFactory : uses
-CompositionRoot ..> DatabaseFactory : uses
-CompositionRoot ..> GfPipeline : assembles
-
-%% ===== Relations: core =====
-GfPipeline --> GfConfig : reads
-GfPipeline --> AIController
-GfPipeline --> MemoryManager
-GfPipeline --> ExpressionManager
-
-AIController --> ILLMProvider : uses
-AIProviderFactory ..> ILLMProvider : creates
-ILLMProvider <|.. OllamaProvider
-ILLMProvider <|.. OpenAICompatibleProvider
-ILLMProvider <|.. FakeLLMProvider
-
-DatabaseController --> IDatabaseProvider : uses
-DatabaseFactory ..> IDatabaseProvider : creates
-IDatabaseProvider <|.. SQLiteProvider
-IDatabaseProvider <|.. InMemoryDatabaseProvider
-
-MemoryManager --> DatabaseController : uses
-MemoryManager --> IContextProvider : uses
-IContextProvider <|.. ConversationWindowProvider
-IContextProvider <|.. RAGContextProvider
-ConversationWindowProvider --> DatabaseController : reads history
-
-ExpressionManager --> GfConfig : validates against
-
-%% ===== Relations: models =====
-AIController ..> GenerationRequest
-AIController ..> GenerationResponse
-ILLMProvider ..> StreamEvent
-GfPipeline ..> CharacterResponse
-IContextProvider ..> ContextBundle
-GenerationRequest o-- Message
-ContextBundle o-- Message
-
-%% ===== Relations: errors =====
-CompanionError <|-- ProviderError
-CompanionError <|-- StorageError
-CompanionError <|-- ConfigError
-CompanionError <|-- InvalidExpressionError
-ProviderError <|-- GenerationTimeoutError
-
-%% ===== Relations: tools =====
-ToolRegistry o-- ITool
-
-%% ===== Relations: adapters =====
-FastAPIAdapter ..> GfPipeline : consumes
-QtDesktopAdapter ..> GfPipeline : consumes
-QtDesktopAdapter --> UIBuilder : uses
-
-note for ITool "Placeholder for the local assistant (post-MVP)"
-note for RAGContextProvider "Wrapper around the existing RAG project; separate optional package"
-note for UIBuilder "Lives in adapters/qt_desktop, not in the core"
-```
+See [`companion_class_diagram.mmd`](./companion_class_diagram.mmd) (Mermaid). It renders
+in GitHub, GitLab, Obsidian, and editors with Mermaid support.
 
 ### Notes on the diagram
 
-- The diagram shows logical roles, not final Python signatures.
-- `DatabaseController` is kept as a separate layer: it hosts storage error normalization, timeouts, and transaction orchestration. It does not depend on a concrete provider, so tests use the real controller with `InMemoryDatabaseProvider`. If during implementation the controller turns out to be an empty wrapper, it should be merged with the provider (principle 10).
-- `MemoryManager` depends on `DatabaseController` and `IContextProvider`, but never on `SQLiteProvider`.
-- `GfPipeline` does not create its dependencies itself: `CompositionRoot` assembles them.
+- The diagram shows logical roles and the principal operations, not exact signatures.
+- `DatabaseController` remains a separate application-layer boundary over
+  `IDatabaseStorage`. It currently mostly forwards calls; if it stays a pure
+  pass-through it may be merged into the provider (principle 10).
+- `MemoryManager` depends on `DatabaseController` and `IContextProvider`, never on
+  `SQLiteProvider`.
+- `GfPipeline` does not create its own dependencies; `CompositionRoot` assembles them.
+- `FakeLLMProvider` and `InMemoryDatabaseProvider` ship inside the package
+  (`ai_girlfriend.testing`) so tests and the demo need no network or disk.
 
 ## 4. Layers and Dependency Rules
 
 | Layer | Contents | May import |
 |---|---|---|
-| `domain` | message and response models, errors | stdlib, Pydantic only |
-| `contracts` | `ILLMProvider`, `IDatabaseProvider`, `IContextProvider`, `ITool` | `domain` |
-| `config` | `Settings`, `GfConfig`, loading | `domain` |
-| `application` | `GfPipeline`, controllers, `MemoryManager`, `ExpressionManager` | `domain`, `contracts`, `config` |
-| `providers` | Ollama, SQLite, context providers | `domain`, `contracts`, third-party libraries |
-| `factories` + `bootstrap` | factories, `build_pipeline` | everything above |
-| `adapters` (outside the core) | FastAPI, Qt, CLI | the core's public API |
+| `models` (domain) | `Message`, `Role`, `GenerationRequest/Response`, `StreamEvent`, `ContextBundle`, `Memory`, `CharacterInfo`, `CharacterResponse`, `Chat`, `ChatSummary`, contracts (`ILLMProvider`, `IDatabaseStorage`, `IContextProvider`) | stdlib, Pydantic |
+| `config` | `Config`, `.env`/`config.json` loading | `models` |
+| application | `GfPipeline`, `AIController`, `DatabaseController`, `MemoryManager`, `ExpressionManager` | `models`, `config` |
+| providers | `OllamaProvider`, `DeepSeekProvider`, `SQLiteProvider`, `ConversationWindowProvider` | `models`, third-party libraries |
+| factories + bootstrap | `LLMProviderFactory`, `DatabaseFactory`, `CompositionRoot` | everything above |
+| `adapters` | `main.py` (FastAPI), `ui/` (QML), `ui_builder/` (widgets) | the core's public API |
+| `exc` | domain error hierarchy | — |
 
-These rules should be enforced by an import test (e.g. forbidding `import PySide6` / `import fastapi` in `src/companion`).
+These rules are enforced by keeping UI/FastAPI imports out of the core packages.
 
 ## 5. Configuration Models
 
-### 5.1 `Settings`
+### 5.1 `Config` (`config/config.py`)
 
-Built on `pydantic-settings`. Responsible for startup and infrastructure parameters:
+Built on `pydantic-settings`, loaded from `config.json` at the project root (also
+readable from environment variables, which take precedence for the same key). It holds
+global startup and infrastructure parameters:
 
-- the type and parameters of the LLM provider;
-- the type and parameters of the database provider;
-- timeouts, logging, context limits;
-- local API settings, if used.
+- LLM: `provider` (`ollama` | `deepseek`), `llm_url`, `model`, `api_key`;
+- generation: `context_window`, `request_timeout`, `temperature`, `max_tokens`;
+- database: `database_provider` (`sqlite` | `postgresql`), `database_url`;
+- `characters: list[CharacterInfo]`.
 
-Cloud provider secrets are stored as `SecretStr` and taken from environment variables or `.env` (which is not committed). Message content is not written to logs at INFO level.
+`api_key` is stored as `SecretStr` and is never logged. A module-level `config = Config()`
+singleton is imported by the adapters and the composition root.
 
-### 5.2 `GfConfig`
+### 5.2 `CharacterInfo` (`models/character.py`)
 
-Responsible for the character profile:
+Responsible for a single character profile:
 
-- a stable identifier and name;
-- the system prompt;
-- a dictionary `expression_id -> asset path`;
-- the initial state (`initial_expression`);
-- the format's `schema_version`;
-- optional behavior and display parameters.
+- `name`, `personality`, `greeting_message`;
+- `photo_emoji_map: dict[str, str]` — expression id → asset path;
+- `initial_expression`;
+- optional per-character `temperature` and `max_tokens` (override the global config);
+- `schema_version`.
 
-`GfConfig` does not create providers and does not open connections. Asset paths are validated at load time: relative to the character directory, without escaping it (`..`), with a file existence check.
+Derived accessors keep the core independent of the raw config shape:
+`character_id` (slug from `name`), `expressions` (non-empty entries only),
+`available_emotions`, `system_prompt`, and `generation_params(...)`.
+
+Asset paths are validated at load time: absolute (or `~`) paths are allowed as-is;
+relative paths must not escape the character directory with `..`.
 
 ## 6. Contracts and Providers
 
 ### 6.1 LLM
 
-`ILLMProvider` is responsible only for interacting with the model. It receives a normalized `GenerationRequest` and returns a `GenerationResponse` or a stream of `StreamEvent`.
+`ILLMProvider` (a `runtime_checkable` Protocol in `models/llm.py`) receives a normalized
+`GenerationRequest` and returns a `GenerationResponse` or streams `StreamEvent`s.
+`LLMProviderFactory.create_provider(...)` maps `provider_name` to a concrete class
+(`ollama` → `OllamaProvider`, `deepseek` → `DeepSeekProvider`) and raises
+`ProviderError` for unknown names or a missing API key.
 
-Streaming contract: `stream()` returns `AsyncIterator[StreamEvent]`, where an event is `TextDelta(text)`, `Done(usage, metadata)`, or `Error(error)`. A single contract serves both SSE in FastAPI and Qt.
+`OllamaProvider` talks to the local `/api/chat` endpoint over `httpx` (no `ollama` SDK),
+including the NDJSON streaming protocol. `DeepSeekProvider` talks to an
+OpenAI-compatible `/chat/completions` endpoint (SSE streaming). Both translate client
+errors into `GenerationTimeoutError` / `ProviderError`.
 
-The character's emotion is an application-level concern. The pipeline asks the model for structured output (`{"text": ..., "expression": ...}`). If parsing fails, the raw text and `initial_expression` are used. `expression` is always validated against the dictionary from `GfConfig`; the model cannot return an arbitrary file path.
+**Streaming contract.** `stream()` yields `TextDelta(text)`, then `Done(usage, metadata)`
+on success, or `Error(message, code)` on failure. One contract serves both the FastAPI
+SSE endpoint and the Qt streaming path.
+
+**Emotion handling.** The character's `system_prompt` asks the model to reply with a
+strict JSON object `{"text": ..., "emotion": ...}`; `GfPipeline._parse_response()`
+extracts `text` and an optional expression (accepting the legacy `expression` key). If
+parsing fails, the raw text is used and the expression falls back. The expression is
+always validated against `CharacterInfo.expressions` — the model can never resolve an
+arbitrary filesystem path.
 
 ### 6.2 Database
 
-`IDatabaseProvider` provides consistent save and read operations: creating a conversation, saving a message, **atomically saving an exchange** (`save_exchange`), and reading recent messages. `SQLiteProvider` implements the contract; SQL and transactions live only here.
+`IDatabaseStorage` (Protocol in `models/database.py`) provides consistent operations:
+`create_chat`, `save_message`, **atomic `save_exchange`**, `get_recent_messages`,
+`list_chats`, `get_messages`, `close`. SQL and transactions live only in `SQLiteProvider`.
 
-Do not move memory business logic into the provider: selecting relevant memories is the responsibility of `MemoryManager`/the context module. Another database must implement the contract without changes to `GfPipeline`.
+`DatabaseController` wraps the provider behind the same provider-agnostic surface.
+`DatabaseFactory.create(provider, url)` normalizes `sqlite:///path` into a filesystem
+path and currently supports only `sqlite` (raising `ConfigError` otherwise).
 
-`sqlite3` blocks the thread: use `aiosqlite` or run it in an executor.
+`sqlite3` blocking is avoided by using `aiosqlite`. `save_exchange` writes the user and
+assistant messages inside a single transaction, so a failed generation never leaves a
+half-saved exchange.
 
 ### 6.3 Context
 
-`IContextProvider.build_context(query, conversation_id)` returns a `ContextBundle` with separate fields `messages` (history) and `memories` (retrieved memories).
+`IContextProvider.build_context(query, chat_id)` returns a `ContextBundle` with separate
+fields `messages` (history) and `memories` (retrieved memories). The default
+`ConversationWindowProvider` returns the last `context_window` messages and no memories.
 
 ### 6.4 Tools (placeholder)
 
-`ITool` describes a tool of the future local assistant: a name, a description, an argument schema (a Pydantic model), `requires_permission`, and `run()`. `ToolRegistry` registers tools. The MVP implements only the contracts; OS command execution and file access are added later as separate tools with explicit user confirmation and argument validation.
+`agent/tools.py` currently defines only stubs (`ITool`, `ToolRegistry`) — the local
+assistant is post-MVP. Future tools will use explicit permissions, user confirmation,
+and argument validation.
 
 ### 6.5 Errors
 
-The base `CompanionError` and its descendants: `ProviderError` (→ `GenerationTimeoutError`), `StorageError`, `ConfigError`, `InvalidExpressionError`. Providers convert library exceptions into these types; controllers may add timeouts and retries; adapters map them to HTTP statuses or UI messages.
+`CompanionError` is the base; descendants are `ProviderError`
+(→ `GenerationTimeoutError`), `StorageError`, `ConfigError`, `InvalidExpressionError`.
+Providers convert library exceptions into these types; `AIController` adds timeouts and
+retries; adapters map them to HTTP statuses (see §10) or UI messages.
 
 ## 7. Factories and the Composition Root
 
-`AIProviderFactory` and `DatabaseFactory` create providers from `Settings`. In the first version an explicit dictionary of supported types is enough (`"ollama" -> OllamaProvider`, `"sqlite" -> SQLiteProvider`); dynamic loading of arbitrary modules is not needed.
+`LLMProviderFactory` and `DatabaseFactory` create providers from `Config`. The single
+assembly point is `CompositionRoot(config).build_pipeline(character=None)`:
 
-The single assembly point is `build_pipeline(settings, config)` in `companion/bootstrap.py`:
+1. pick the character (defaults to `config.characters[0]`, raising `ConfigError` if
+   none are configured);
+2. factories create an `ILLMProvider` and an `IDatabaseStorage`;
+3. wrap them in `AIController` and `DatabaseController`;
+4. build a `ConversationWindowProvider` and `MemoryManager`;
+5. build an `ExpressionManager`;
+6. return a ready `GfPipeline` carrying `default_temperature` / `default_max_tokens`.
 
-1. factories create `ILLMProvider` and `IDatabaseProvider`;
-2. providers are passed to `AIController` and `DatabaseController`;
-3. an `IContextProvider` is built (`ConversationWindowProvider` by default);
-4. `MemoryManager` and `ExpressionManager` are assembled;
-5. the ready `GfPipeline` is returned.
-
-In tests, the same pipeline is assembled manually from `FakeLLMProvider` and `InMemoryDatabaseProvider`.
+In tests the same pipeline is assembled manually from `FakeLLMProvider` and
+`InMemoryDatabaseProvider`.
 
 ## 8. Message Processing Flow
 
-1. The UI or API adapter passes the text to `GfPipeline.chat()`.
-2. `GfPipeline` asks `MemoryManager.build_context()` to build the context (history + memories) via `IContextProvider`.
-3. The system prompt from `GfConfig`, the context, and the user message are turned into a `GenerationRequest`.
-4. `AIController` calls `ILLMProvider`; errors are converted to domain errors (`ProviderError`, `GenerationTimeoutError`).
-5. The response is normalized: structured output is parsed, and `ExpressionManager.resolve()` validates the expression ID (fallback — `initial_expression`).
-6. `MemoryManager.record_exchange()` saves the user message and the response **in a single transaction** (`save_exchange`).
-7. `GfPipeline` returns a `CharacterResponse`; the adapter shows the text and, if there is a GUI, updates the portrait via `ExpressionManager.asset_path()`.
+See [`flows.md`](./flows.md) for the full flowcharts/sequence diagrams.
+
+`GfPipeline.chat()`:
+
+1. Lazily `init()` the pipeline (initializes the database).
+2. `_ensure_chat(chat_id)` — reuse the given chat id or create a new chat row so
+   messages' foreign key exists.
+3. Ask `MemoryManager.build_context()` for the recent history via
+   `IContextProvider`.
+4. Build a `GenerationRequest`: the character `system_prompt`, the context, and the user
+   message; params come from `CharacterInfo.generation_params()` (character overrides beat
+   global defaults; the token cap maps to `num_predict` for Ollama or `max_tokens`
+   otherwise).
+5. `AIController.generate()` calls the provider; errors become domain errors.
+6. `_parse_response()` normalizes the structured output; `ExpressionManager.resolve()`
+   validates the expression id (fallback chain → `initial_expression`).
+7. `MemoryManager.record_exchange()` saves both messages in one transaction.
+8. Return a `CharacterResponse(text, expression, chat_id)`.
+
+`stream_chat()` mirrors this but yields `StreamEvent`s and saves the exchange only on
+`Done`. Partial text from a cancelled stream is **not** persisted.
 
 Reliability rules:
 
-- If generation fails, nothing is saved, so no falsely completed exchange appears.
-- Messages have identifiers.
-- In streaming mode the exchange is saved on `Done`. Cancellation ("stop" in the GUI) in the MVP **does not save** partial text; this decision can be revisited.
+- On generation failure nothing is saved (no false exchange).
+- Messages carry UUID identifiers.
+- In streaming mode the exchange is saved on `Done`.
 
 ## 9. RAG and Memory
 
-RAG is not a mandatory dependency of the core. It plugs in through `IContextProvider`. The existing RAG project is wrapped in `RAGContextProvider` and distributed as a separate optional package (the `rag` extra); only the contract remains in the core.
+RAG is not a mandatory dependency. It plugs in through `IContextProvider`; the external
+RAG project would be wrapped by an `RAGContextProvider` and distributed as a separate
+optional package. `GfPipeline` history reads (`list_chats`, `get_messages`) and the
+UI history view are already implemented on top of the storage layer.
 
-The initial `ConversationWindowProvider` returns the last N messages (`Settings.context_window`). A later implementation can search for relevant fragments in the history, documents, or long-term memory.
+The system logically distinguishes:
 
-It is worth logically distinguishing:
+1. **Dialogue history** — the message sequence of a conversation.
+2. **Long-term memory** — facts/events that outlive the short context.
+3. **RAG retrieval** — finding relevant fragments for the current query.
 
-1. **Dialogue history** — the sequence of messages in a conversation.
-2. **Long-term memory** — selected facts and events that outlive the boundaries of the short context.
-3. **RAG retrieval** — searching for relevant fragments based on the current query (documents, knowledge base).
+`ContextBundle` keeps `messages` and `memories` separate.
 
-These are different sources with different update dynamics; `ContextBundle` keeps them separate.
+## 10. Transport Adapters
 
-For the diploma thesis this gives a ready-made experiment: comparing answers with and without RAG on identical dialogues.
+All adapters live outside the core packages and use the core's public API (`GfPipeline`).
 
-## 10. GUI and Adapters
+### FastAPI (`main.py`)
 
-All adapters live outside `src/companion` and use only the core's public API (`GfPipeline`).
+A thin transport adapter. The pipeline is built once in `lifespan` and stored in
+`app.state` as a singleton. Domain errors are mapped to HTTP statuses:
+`GenerationTimeoutError → 504`, `ProviderError → 502`, `StorageError → 500`,
+`ConfigError → 500`.
 
-### FastAPI
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/` | Welcome message. |
+| `POST` | `/chat` | New conversation: send the first message (no chat id). |
+| `POST` | `/chat/{chat_id}/message` | Send a message in an existing chat. |
+| `GET` | `/chat/{chat_id}` | Chat metadata + stored history. |
+| `POST` | `/chat/{chat_id}/stream` | Stream the reply as Server-Sent Events. |
 
-A thin transport adapter: it validates the HTTP request, calls `GfPipeline`, and converts the result and domain errors into an HTTP response. Streaming (SSE) is built from `StreamEvent`. There is no business logic in routers. The adapter is temporary and must be replaceable without changes to the core.
+### Qt (desktop)
 
-### Qt
+Two paths exist:
 
-`QtDesktopAdapter` starts the application, and `UIBuilder` builds the widgets and connects them to `GfPipeline`. It contains no prompt-building logic, SQL, or provider selection.
+- **QML UI (`ui/`)** — the primary experience. `run()` in `ui/app.py` builds the
+  `CompositionRoot`, starts an `AsyncWorker` (a `QThread` running its own asyncio loop),
+  constructs `ChatBackend` / `SettingsBackend` / `ThemeController` / `FileSystemBackend`,
+  registers the `ThemeController` singleton, exposes the backends as context properties,
+  and loads `Main.qml`. QML renders; Python holds state; the core does the work. Run it
+  with `invoke ui` (real pipeline) or `invoke demo` (offline fake core).
+- **Widget adapter (`ui_builder/`)** — a minimal `ChatWindow` + `UIBuilder` +
+  `QtDesktopAdapter` using the same `AsyncWorker`, useful for a lightweight or programmatic
+  window.
 
-An async core next to the Qt event loop needs a separate decision (see section 16): `qasync`, a separate thread with its own asyncio loop, or a `QThread` worker. The main rule: no core call blocks the GUI thread. A missing character asset produces a clear message and a fallback portrait.
+The main rule: no core call blocks the GUI thread. The QML layer reaches the Python
+backends through the `Backends` singleton (`ui/qml/Backends.qml`), which re-exposes the
+context properties under stable names.
 
-### CLI and Local Assistant
-
-The CLI is one more adapter without a GUI. For assistant functions (OS commands, files), `ITool` is used with explicit permissions, user confirmation, and argument validation.
-
-## 11. Recommended Repository Structure
+## 11. Repository Structure (as implemented)
 
 ```text
-companion-framework/
+ai-girlfriend/
 ├── pyproject.toml
 ├── tasks.py                    # invoke tasks
-├── .pre-commit-config.yaml
-├── .github/
-│   └── workflows/
-│       └── ci.yml              # planned
-├── README.md
-├── docs/
-│   ├── architecture.md
-│   └── adr/                    # short architecture decision records
+├── config.example.json
+├── .env.example
+├── config.json                 # local, not committed
 ├── src/
-│   └── companion/
-│       ├── __init__.py         # public exports
-│       ├── bootstrap.py        # composition root: build_pipeline()
-│       ├── config/
-│       │   ├── settings.py
-│       │   ├── character.py
-│       │   └── loader.py
-│       ├── domain/
-│       │   ├── messages.py
-│       │   ├── responses.py
-│       │   ├── events.py       # StreamEvent
-│       │   └── errors.py
-│       ├── contracts/
-│       │   ├── llm.py
-│       │   ├── database.py
-│       │   ├── context.py
-│       │   └── tools.py        # ITool (placeholder)
-│       ├── application/
-│       │   ├── pipeline.py
-│       │   ├── ai_controller.py
+│   └── ai_girlfriend/
+│       ├── __init__.py
+│       ├── composition_root.py # CompositionRoot.build_pipeline()
+│       ├── config/config.py    # Config (pydantic-settings)
+│       ├── exc.py              # domain error hierarchy
+│       ├── gf_pipeline.py      # GfPipeline facade
+│       ├── main.py             # FastAPI adapter
+│       ├── agent/tools.py      # ITool / ToolRegistry stubs
+│       ├── character/expression_manager.py
+│       ├── database/
 │       │   ├── database_controller.py
-│       │   ├── memory_manager.py
-│       │   └── expression_manager.py
-│       ├── factories/
-│       │   ├── ai_factory.py
-│       │   └── database_factory.py
-│       ├── providers/
-│       │   ├── llm/
-│       │   │   ├── ollama.py
-│       │   │   └── openai_compatible.py
-│       │   ├── database/
-│       │   │   └── sqlite.py
-│       │   └── context/
-│       │       └── conversation_window.py
-│       └── testing/            # fakes shipped with the package
-│           ├── fake_llm.py
-│           └── in_memory_db.py
-├── adapters/
-│   ├── fastapi_app/
-│   └── qt_desktop/             # QtDesktopAdapter + UIBuilder
+│       │   ├── database_factory.py
+│       │   ├── sqlite_provider.py
+│       │   ├── conversation_window.py
+│       │   └── memory_manager.py
+│       ├── llm/
+│       │   ├── llm_provider.py # AIController + LLMProviderFactory
+│       │   ├── ollama_provider.py
+│       │   └── deepseek_provider.py
+│       ├── models/
+│       │   ├── llm.py          # Message, Role, requests, ILLMProvider
+│       │   ├── events.py       # StreamEvent union
+│       │   ├── character.py    # CharacterInfo
+│       │   ├── context.py      # ContextBundle, Memory, IContextProvider
+│       │   ├── database.py     # Chat, ChatSummary, IDatabaseStorage
+│       │   ├── responses.py    # CharacterResponse
+│       │   └── agent.py
+│       ├── testing/            # FakeLLMProvider, InMemoryDatabaseProvider
+│       ├── ui/                 # QML desktop app (primary)
+│       │   ├── app.py          # bootstrap
+│       │   ├── backends.py     # AsyncWorker, ChatBackend, SettingsBackend
+│       │   ├── characters_store.py, themes.py, themes_store.py
+│       │   ├── filesystem.py, plugins.py, demo.py
+│       │   └── qml/            # Main.qml, ChatView.qml, SettingsView.qml, ...
+│       └── ui_builder/         # minimal widget adapter
 └── tests/
     ├── unit/
     ├── contract/
     └── integration/
 ```
 
-`RAGContextProvider` lives in a separate package (e.g. `companion-rag`) or in the `rag` extra. Qt and FastAPI are optional dependencies:
-
-```toml
-[project.optional-dependencies]
-fastapi = ["fastapi", "uvicorn"]
-qt = ["PySide6"]
-rag = []   # dependencies of the RAG adapter
-dev = ["pytest", "pytest-asyncio", "ruff", "invoke", "pre-commit"]
-```
+Qt and FastAPI are runtime dependencies in the current `pyproject.toml`; the `qt` and
+`rag` extras reserve space for optional packaging.
 
 ## 12. Development Tooling
 
-Principle: **a single `invoke check` command does the same thing locally, in pre-commit, and in CI.**
+The single entry point is `tasks.py` (invoke):
 
-### 12.1 invoke
+| Task | Effect |
+|---|---|
+| `invoke format` | `ruff format` + `ruff check --fix` |
+| `invoke check` | `ruff check` + `ruff format --check` |
+| `invoke test` | `pytest` (with coverage reports) |
+| `invoke ci` | `check` then `test` |
+| `invoke ui` | Launch the QML UI against the real pipeline |
+| `invoke demo` | Launch the QML UI against the offline demo core |
 
-`tasks.py` is the single entry point for common actions.
-
-```python
-from invoke import task
-
-
-@task
-def lint(c):
-    c.run("ruff check .")
-
-
-@task
-def fmt(c, check=False):
-    c.run("ruff format --check ." if check else "ruff format .")
-
-
-@task
-def test(c, marker=None, cov=False):
-    cmd = "pytest"
-    if marker:
-        cmd += f' -m "{marker}"'
-    if cov:
-        cmd += " --cov=src/companion"
-    c.run(cmd)
-
-
-@task(pre=[lint])
-def check(c):
-    """Checks run both locally and in CI."""
-    fmt(c, check=True)
-    test(c, marker="not integration")
-```
-
-Usage: `invoke lint`, `invoke fmt`, `invoke test --marker unit`, `invoke check`.
-
-### 12.2 ruff
-
-Linter and formatter in one tool.
-
-```toml
-[tool.ruff]
-line-length = 100
-target-version = "py311"   # confirm the minimum Python version (section 16)
-src = ["src", "tests"]
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
-```
-
-### 12.3 pytest
-
-```toml
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
-markers = [
-  "unit: fast tests without I/O",
-  "contract: providers conform to their contracts",
-  "integration: pipeline with real dependencies (SQLite, Ollama if needed)",
-]
-```
-
-Async tests need `pytest-asyncio`. Tests with a real Ollama are marked `integration` and are excluded from CI by default.
-
-### 12.4 pre-commit
-
-```yaml
-repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: <pin the current version>
-    hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: <pin the current version>
-    hooks:
-      - id: check-yaml
-      - id: check-toml
-      - id: end-of-file-fixer
-      - id: trailing-whitespace
-  - repo: local
-    hooks:
-      - id: unit-tests
-        name: unit tests
-        entry: invoke test --marker unit
-        language: system
-        pass_filenames: false
-        stages: [pre-push]
-```
-
-Fast checks run on commit, unit tests on push.
-
-### 12.5 GitHub Actions (planned)
-
-A single workflow runs the same commands as local development:
-
-```yaml
-name: CI
-on: [push, pull_request]
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev]"
-      - run: invoke check
-```
-
-Integration tests with a real model do not run in CI.
+`ruff` is configured in `pyproject.toml` (`line-length = 88`, `target-version = "py313"`,
+selects `E/W/F/I/B/UP/N/ASYNC/RUF`, with QML-integration naming relaxations for `ui/`).
+`pytest` uses `asyncio_mode = "auto"`, `pythonpath = ["."]`, and markers
+`unit` / `contract` / `integration`. Coverage HTML is written to `htmlcov/`.
 
 ## 13. Implementation Stages
 
-### Stage 0 — Project Skeleton
-
-- `pyproject.toml` with extras, ruff, and pytest.
-- `tasks.py`, `.pre-commit-config.yaml`, empty packages following the structure in section 11.
-- A placeholder test so that `invoke check` passes from the first commit.
-
-### Stage 1 — Contracts, Domain, and Fakes
-
-- Pydantic models: `Settings`, `GfConfig`, `Message`/`Role`, `GenerationRequest/Response`, `StreamEvent`, `ContextBundle`, `CharacterResponse`.
-- Error hierarchy.
-- Protocols `ILLMProvider`, `IDatabaseProvider`, `IContextProvider`; an `ITool` placeholder.
-- `FakeLLMProvider`, `InMemoryDatabaseProvider`.
-- `AIController`, `DatabaseController`, `MemoryManager`, `ExpressionManager`, `GfPipeline`, `build_pipeline`.
-- A `GfPipeline.chat()` test with no network, disk, or GUI.
-
-### Stage 2 — Vertical Slice
-
-- `OllamaProvider` (including structured output and fallback).
-- `SQLiteProvider` (async, transactional `save_exchange`).
-- Factories for both providers.
-- Contract tests for every provider; an integration test without a GUI.
-
-### Stage 3 — FastAPI Adapter
-
-- A message-sending endpoint.
-- Normalized errors and timeouts.
-- Streaming response (SSE) built from `StreamEvent`.
-
-### Stage 4 — Character and GUI
-
-- `GfConfig` with portraits and path validation.
-- Qt adapter and `UIBuilder`, manual emotion switching, response display.
-- Decision on integrating the async core with the Qt event loop (ADR).
-
-### Stage 5 — RAG
-
-- `RAGContextProvider` as a wrapper around the existing RAG project.
-- Tests confirming that disabling RAG does not break the base core.
-- A diploma experiment: with and without RAG.
-
-### Stage 6 — Library and Local Assistant
-
-- Public exports in `companion.__init__`, API documentation and examples.
-- GitHub Actions and package publishing.
-- A CLI adapter.
-- Implementing `ITool`, `ToolRegistry`, and a permission policy.
+| Stage | Scope | Status |
+|---|---|---|
+| 0 | Project skeleton (`pyproject.toml`, `tasks.py`, packages) | done |
+| 1 | Contracts, domain models, fakes, facade | done |
+| 2 | Vertical slice: `OllamaProvider`, `SQLiteProvider`, factories, contract tests | done |
+| 3 | FastAPI adapter (chat, message, history, SSE stream) | done |
+| 4 | Character & GUI (QML app, themes, character management, history) | done |
+| 5 | RAG (`RAGContextProvider`) | planned |
+| 6 | Library packaging, CI, CLI, assistant tools | planned |
 
 ## 14. Testing
 
-- **Unit tests:** configuration and asset path validation, response normalization, emotion mapping, structured output parsing.
-- **Contract tests:** every LLM, database, and context provider conforms to its contract (one shared test suite for all implementations).
-- **Integration tests:** the pipeline with `FakeLLMProvider` and a temporary SQLite database; separately, with a real Ollama (marked `integration`).
-- **Adapter tests:** FastAPI/Qt verify only the integration with the core.
-- **Architecture test:** `src/companion` does not import PySide6 or FastAPI.
-- **Failure tests:** unavailable model, timeout, malformed model output, invalid emotion, missing asset, database write error, stream cancellation.
+- **Unit:** composition wiring, response normalization and emotion mapping, expression
+  resolution/validation, memory manager, UI stores, Qt adapter, and (via fakes) the
+  pipeline without network, disk, or GUI.
+- **Contract:** every `IDatabaseStorage` implementation passes one shared suite
+  (in-memory + SQLite).
+- **Integration:** the SQLite provider with a temporary database.
+- **Adapter:** FastAPI/Qt verify only the integration with the core.
+- **Failure tests:** unavailable model, timeout, malformed model output, invalid emotion,
+  missing asset, database write error.
 
 ## 15. MVP Readiness Criteria
 
-- Configuration is loaded and validated.
-- Providers are created by factories in the composition root, and services depend on contracts.
-- A message is sent to Ollama and returned in a normalized `CharacterResponse`.
-- History is saved to and restored from SQLite; the exchange is saved atomically.
+- Configuration is loaded and validated from `config.json`.
+- Providers are created by factories in the composition root; services depend on
+  contracts.
+- A message reaches the LLM and returns a normalized `CharacterResponse`.
+- History is saved to and restored from SQLite; exchanges are saved atomically.
 - `GfPipeline` works in a test without FastAPI and Qt (using fakes).
-- The FastAPI adapter uses the same core.
+- The FastAPI adapter and the QML UI consume the same core.
 - The absence of RAG does not prevent the base scenario.
-- An invalid expression ID does not lead to arbitrary filesystem access.
-- Errors and resource cleanup are handled predictably; a generation failure leaves no false exchange in the database.
-- `invoke check` passes locally and in pre-commit.
+- An invalid expression id never leads to arbitrary filesystem access.
+- Errors and resource cleanup are predictable; a generation failure leaves no false
+  exchange.
 
 ## 16. Open Architectural Decisions
 
-Each decision is recorded as a short ADR in `docs/adr/`.
-
-- Whether `GfPipeline` remains a specialized companion facade or becomes a universal agent (together with an assistant mode and `ToolRegistry`).
-- Whether `DatabaseController` stays a separate layer or is merged into the provider if it has no logic of its own.
-- How the async core integrates with Qt: `qasync`, a separate thread with its own loop, or a `QThread` worker.
-- Whether to save partial text when a stream is cancelled.
+- Whether `GfPipeline` remains a specialized companion facade or grows into a universal
+  agent (assistant mode + `ToolRegistry`).
+- Whether `DatabaseController` stays a separate layer or is merged into the provider.
+- Async core ↔ Qt integration: currently a dedicated asyncio thread (`AsyncWorker`); keep
+  or evaluate `qasync`.
+- Whether to persist partial text when a stream is cancelled.
 - Whether RAG is a separate package or an extra of the same distribution.
-- The minimum supported Python version (3.11+ recommended).
-- Whether to add type checking (mypy/pyright) to `invoke check`.
-- Whether Qt and FastAPI are published as separate packages.
-
-**Recommendation:** first fix a small public API of the core (`GfPipeline`: `chat`, `stream_chat`, `close`) and one fully working vertical scenario with tests. Do not create abstractions "just in case".
+- Whether Qt and FastAPI become optional extras rather than hard dependencies.
