@@ -23,15 +23,22 @@ Page {
             Layout.fillWidth: true
             glyph: "🎨"
             title: qsTr("Color theme")
-            subtitle: settingsBackend.themeInfo(settingsBackend.currentTheme).name
+            subtitle: Backends.settings.themeInfo(Backends.settings.currentTheme).name
             onClicked: view.StackView.view.push(Qt.resolvedUrl("ThemePicker.qml"))
         }
         SettingsRow {
             Layout.fillWidth: true
             glyph: "💬"
             title: qsTr("Character")
-            subtitle: settingsBackend.characterInfo(settingsBackend.currentCharacter).name
+            subtitle: Backends.settings.characterInfo(Backends.settings.currentCharacter).name
             onClicked: view.StackView.view.push(Qt.resolvedUrl("CharacterPicker.qml"))
+        }
+        SettingsRow {
+            Layout.fillWidth: true
+            glyph: "🕘"
+            title: qsTr("Chat history")
+            subtitle: qsTr("Browse and continue previous conversations")
+            onClicked: view.StackView.view.push(Qt.resolvedUrl("ChatHistoryView.qml"))
         }
     }
 }

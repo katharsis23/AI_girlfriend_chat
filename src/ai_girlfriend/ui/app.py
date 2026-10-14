@@ -12,6 +12,7 @@ from PySide6.QtQuickControls2 import QQuickStyle
 
 from src.ai_girlfriend.ui.backends import AsyncWorker, ChatBackend, SettingsBackend
 from src.ai_girlfriend.ui.characters_store import CharacterStore
+from src.ai_girlfriend.ui.filesystem import FileSystemBackend
 from src.ai_girlfriend.ui.plugins import builtin_registry
 from src.ai_girlfriend.ui.themes import ThemeController
 from src.ai_girlfriend.ui.themes_store import ThemeStore
@@ -59,6 +60,9 @@ def run(root=None, demo: bool = False) -> int:
     ctx = engine.rootContext()
     ctx.setContextProperty("chatBackend", chat)
     ctx.setContextProperty("settingsBackend", settings)
+    # In-app image browser for choosing character portrait files (task 3).
+    file_backend = FileSystemBackend()
+    ctx.setContextProperty("fileBackend", file_backend)
     registry = builtin_registry()
     registry.expose(engine)
 

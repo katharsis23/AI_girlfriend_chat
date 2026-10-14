@@ -15,6 +15,7 @@ REQUIRED_TOKENS = [
     "tertiary",
     "onSurface",
     "onSurfaceVariant",
+    "text",
     "outline",
     "error",
     "onError",
@@ -23,6 +24,10 @@ REQUIRED_TOKENS = [
     "assistantBubble",
     "onAssistantBubble",
 ]
+
+# Tokens added after a theme may have been saved. A missing token is filled
+# from this sibling instead of invalidating the whole theme (see themes_store).
+OPTIONAL_TOKEN_DEFAULTS = {"text": "onSurface"}
 
 THEMES: dict[str, dict] = {
     "rose": {
@@ -38,6 +43,7 @@ THEMES: dict[str, dict] = {
             "tertiary": "#EFBD94",
             "onSurface": "#F2DEE2",
             "onSurfaceVariant": "#D6C2C7",
+            "text": "#F2DEE2",
             "outline": "#9F8C91",
             "error": "#FFB4AB",
             "onError": "#690005",
@@ -60,6 +66,7 @@ THEMES: dict[str, dict] = {
             "tertiary": "#3D6373",
             "onSurface": "#171D1A",
             "onSurfaceVariant": "#404943",
+            "text": "#171D1A",
             "outline": "#707973",
             "error": "#BA1A1A",
             "onError": "#FFFFFF",
@@ -82,6 +89,7 @@ THEMES: dict[str, dict] = {
             "tertiary": "#DABCE2",
             "onSurface": "#FFFFFF",
             "onSurfaceVariant": "#C4C6D0",
+            "text": "#FFFFFF",
             "outline": "#8E9099",
             "error": "#FFB4AB",
             "onError": "#690005",
@@ -124,7 +132,20 @@ class ThemeController(QObject):
 
     @Property("QVariantMap", notify=themeChanged)
     def colors(self):
-        return self._themes[self._id]["colors"]
+        """The active theme's colors, guaranteed to contain every required role.
+
+        Older/custom themes may predate a token (e.g. ``text``); we backfill it
+        from :data:`OPTIONAL_TOKEN_DEFAULTS` so QML never reads ``undefined``
+        for a color role (which would fall back to the default black text).
+        """
+        return self._resolved_colors(self._id)
+
+    def _resolved_colors(self, theme_id: str) -> dict[str, str]:
+        colors = dict(self._themes[theme_id]["colors"])
+        for token, fallback in OPTIONAL_TOKEN_DEFAULTS.items():
+            if colors.get(token) is None:
+                colors[token] = colors.get(fallback, colors.get("onSurface", "#000000"))
+        return colors
 
     @Property(bool, notify=themeChanged)
     def isDark(self):
@@ -139,6 +160,12 @@ class ThemeController(QObject):
         if theme_id in self._themes and theme_id != self._id:
             self._id = theme_id
             self.themeChanged.emit()
+
+    def resolved_colors(self, theme_id: str) -> dict[str, str]:
+        """Public helper: colors for ``theme_id`` with optional tokens filled."""
+        if theme_id not in self._themes:
+            return {}
+        return self._resolved_colors(theme_id)
 
     @Slot(str, str, bool, "QVariantMap", result=str)
     def saveCustomTheme(self, theme_id: str, name: str, dark: bool, colors) -> str:

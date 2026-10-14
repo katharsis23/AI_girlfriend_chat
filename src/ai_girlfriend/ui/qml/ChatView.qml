@@ -7,19 +7,25 @@ Page {
     id: view
     signal openSettings()
 
-    property string currentExpression: chatBackend.initialExpression
+    property string currentExpression: Backends.chat.initialExpression
     readonly property bool wide: width >= 760
 
     background: Rectangle { color: Theme.background }
 
     header: TopBar {
-        title: chatBackend.characterName
-        subtitle: chatBackend.busy ? qsTr("typing…") : ""
+        title: Backends.chat.characterName
+        subtitle: Backends.chat.busy ? qsTr("typing…") : ""
         IconButton {
             glyph: "✚"
             accessibleName: qsTr("New conversation")
-            enabled: !chatBackend.busy
-            onClicked: { messages.clear(); chatBackend.resetChat() }
+            enabled: !Backends.chat.busy
+            onClicked: { messages.clear(); Backends.chat.resetChat() }
+        }
+        IconButton {
+            glyph: "🗎"
+            accessibleName: qsTr("Chat history")
+            enabled: !Backends.chat.busy
+            onClicked: view.StackView.view.push(Qt.resolvedUrl("ChatHistoryView.qml"))
         }
         IconButton {
             glyph: "⚙"
@@ -30,10 +36,20 @@ Page {
 
     ListModel { id: messages }
 
+    // Replace the transcript with a previously stored conversation and continue
+    // it (the ChatBackend already retargeted its active chat id).
+    function adoptTranscript(transcript) {
+        messages.clear()
+        for (var i = 0; i < transcript.length; ++i) {
+            messages.append({ "role": transcript[i].role, "text": transcript[i].text })
+        }
+        Qt.callLater(list.scrollToEnd)
+    }
+
     function send() {
         var t = field.text.trim()
-        if (t.length === 0 || chatBackend.busy) return
-        chatBackend.sendMessage(t)
+        if (t.length === 0 || Backends.chat.busy) return
+        Backends.chat.sendMessage(t)
         field.clear()
     }
 
@@ -58,12 +74,12 @@ Page {
                     Layout.preferredWidth: Math.min(parent.width, 260)
                     Layout.preferredHeight: Math.min(parent.width, 260)
                     expression: view.currentExpression
-                    source: chatBackend.expressionUrl(view.currentExpression)
+                    source: Backends.chat.expressionUrl(view.currentExpression)
                 }
                 Label {
                     Layout.alignment: Qt.AlignHCenter
-                    text: chatBackend.characterName
-                    color: Theme.onSurface
+                    text: Backends.chat.characterName
+                    color: Theme.text
                     font.pixelSize: Theme.fontSizeXL
                     font.weight: Font.Medium
                 }
@@ -96,13 +112,13 @@ Page {
 
                     footer: Item {
                         width: list.width
-                        height: chatBackend.busy ? 52 : 0
+                        height: Backends.chat.busy ? 52 : 0
                         clip: true
                         Behavior on height { NumberAnimation { duration: Theme.durationShort } }
                         TypingIndicator {
                             x: 16
                             y: 6
-                            visible: chatBackend.busy
+                            visible: Backends.chat.busy
                         }
                     }
 
@@ -124,9 +140,9 @@ Page {
                 EmptyState {
                     anchors.fill: parent
                     visible: messages.count === 0
-                    greeting: chatBackend.greeting
+                    greeting: Backends.chat.greeting
                     expression: view.currentExpression
-                    source: chatBackend.expressionUrl(view.currentExpression)
+                    source: Backends.chat.expressionUrl(view.currentExpression)
                     showPortrait: !view.wide
                 }
             }
@@ -149,7 +165,7 @@ Page {
                         id: field
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        enabled: !chatBackend.busy
+                        enabled: !Backends.chat.busy
                         placeholderText: qsTr("Write a message…")
                         placeholderTextColor: Theme.onSurfaceVariant
                         color: Theme.onSurface
@@ -174,7 +190,7 @@ Page {
                         filled: true
                         glyph: "↑"
                         accessibleName: qsTr("Send")
-                        enabled: !chatBackend.busy && field.text.trim().length > 0
+                        enabled: !Backends.chat.busy && field.text.trim().length > 0
                         Layout.preferredWidth: 52
                         Layout.preferredHeight: 52
                         onClicked: view.send()
@@ -185,7 +201,7 @@ Page {
     }
 
     Connections {
-        target: chatBackend
+        target: Backends.chat
         function onMessageAppended(role, text) {
             messages.append({ "role": role, "text": text })
             Qt.callLater(list.scrollToEnd)
@@ -195,12 +211,18 @@ Page {
             if (!value) field.forceActiveFocus()
             Qt.callLater(list.scrollToEnd)
         }
+        function onChatLoaded(id, transcript) {
+            view.adoptTranscript(transcript)
+            // If we're on the history page, pop back to the chat.
+            var stack = view.StackView.view
+            if (stack && stack.depth > 1) stack.pop(null)
+        }
     }
     Connections {
-        target: settingsBackend
+        target: Backends.settings
         function onCharacterChanged(id) {      // new character => fresh transcript (spec §6.2)
             messages.clear()
-            view.currentExpression = chatBackend.initialExpression
+            view.currentExpression = Backends.chat.initialExpression
         }
     }
     Component.onCompleted: field.forceActiveFocus()

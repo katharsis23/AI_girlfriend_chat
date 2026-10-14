@@ -53,6 +53,46 @@ def _character_greeting(character: Any) -> str:
     )
 
 
+def _optional_float(value: Any) -> float | None:
+    """Coerce a form value to ``float``; empty/invalid becomes ``None``."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: Any) -> int | None:
+    """Coerce a form value to ``int``; empty/invalid becomes ``None``."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_image(path: Path) -> bool:
+    from src.ai_girlfriend.ui.filesystem import IMAGE_SUFFIXES
+
+    return path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+
+
+def _url_for_path(path: Path) -> str:
+    return QUrl.fromLocalFile(str(path.resolve())).toString()
+
+
+def _format_timestamp(value: Any) -> str:
+    """Human-friendly timestamp for the history list; '' when unavailable."""
+    if value is None:
+        return ""
+    try:
+        return value.strftime("%Y-%m-%d %H:%M")
+    except (AttributeError, ValueError):
+        return str(value)
+
+
 def _expression_url(character: Any, expression: str, pipeline: Any = None) -> str:
     """Resolve an expression id to a file URL, or '' to use the emoji fallback.
 
@@ -60,19 +100,36 @@ def _expression_url(character: Any, expression: str, pipeline: Any = None) -> st
     through ``ExpressionManager.asset_path`` (which applies ``base_dir`` and the
     traversal guard) whenever the pipeline is available. Falling back to a bare
     ``photo_emoji_map`` lookup keeps the demo path working.
+
+    Robust fallback (task 4): if the requested emotion has no usable image on
+    disk (unknown id, missing file, hallucinated emotion), we walk a chain of
+    candidates — the resolved id, then ``initial_expression``, then ``default``,
+    then any mapped asset — and return the first that exists. Only when nothing
+    is available do we return '' so the QML layer shows the emoji placeholder.
     """
-    try:
-        manager = getattr(pipeline, "expression_manager", None)
-        if manager is not None:
-            path = manager.asset_path(expression)
-            if path and Path(path).is_file():
-                return QUrl.fromLocalFile(str(Path(path).resolve())).toString()
-            return ""
-        raw = (getattr(character, "photo_emoji_map", None) or {}).get(expression)
-        if raw and Path(raw).is_file():
-            return QUrl.fromLocalFile(str(Path(raw).resolve())).toString()
-    except Exception:
-        pass
+    manager = getattr(pipeline, "expression_manager", None)
+    raw_map = dict(getattr(character, "photo_emoji_map", None) or {})
+    initial = getattr(character, "initial_expression", None)
+
+    candidates: list[str] = []
+    for candidate in (expression, initial, "default"):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    for candidate in raw_map:
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    for candidate_id in candidates:
+        try:
+            if manager is not None:
+                path = manager.asset_path(candidate_id)
+            else:
+                raw = raw_map.get(candidate_id)
+                path = Path(raw).expanduser() if raw else None
+            if path is not None and _is_image(Path(path)):
+                return _url_for_path(Path(path))
+        except Exception:
+            continue
     return ""
 
 
@@ -82,7 +139,13 @@ class ChatBackend(QObject):
     expressionChanged = Signal(str)
     errorRaised = Signal(str)
     characterChanged = Signal()
+    # History: emitted with a list of chat summaries, and with a loaded
+    # transcript (list of {role, text} maps) when a previous chat is opened.
+    chatsListed = Signal("QVariantList")
+    chatLoaded = Signal(str, "QVariantList")
     _replyReady = Signal(object)
+    _chatsReady = Signal(object)
+    _messagesReady = Signal(object, str)
 
     def __init__(self, worker: AsyncWorker, pipeline: Any, character: Any, parent=None):
         super().__init__(parent)
@@ -92,6 +155,8 @@ class ChatBackend(QObject):
         self._chat_id: Any = None
         self._busy = False
         self._replyReady.connect(self._on_reply)
+        self._chatsReady.connect(self._on_chats)
+        self._messagesReady.connect(self._on_messages)
 
     # --- properties -----------------------------------------------------
     @Property(bool, notify=busyChanged)
@@ -134,6 +199,42 @@ class ChatBackend(QObject):
     def expressionUrl(self, expression: str) -> str:
         return _expression_url(self._character, expression, self._pipeline)
 
+    # --- history (read-only views into stored conversations) -------------
+    @Property(str, notify=characterChanged)
+    def currentChatId(self):
+        return "" if self._chat_id is None else str(self._chat_id)
+
+    @Slot(int)
+    def listChats(self, limit: int = 50) -> None:
+        """Fetch recent conversations for the history view (async)."""
+        lister = getattr(self._pipeline, "list_chats", None)
+        if lister is None:  # demo pipeline has no persistence
+            self.chatsListed.emit([])
+            return
+
+        async def call():
+            result = lister(limit)
+            return await result if inspect.isawaitable(result) else result
+
+        self._worker.submit(call()).add_done_callback(self._chatsReady.emit)
+
+    @Slot(str)
+    def loadChat(self, chat_id: str) -> None:
+        """Open a stored conversation: replay its transcript and continue it."""
+        if not chat_id:
+            return
+        getter = getattr(self._pipeline, "get_messages", None)
+        if getter is None:
+            return
+
+        async def call():
+            result = getter(chat_id)
+            return await result if inspect.isawaitable(result) else result
+
+        self._worker.submit(call()).add_done_callback(
+            lambda fut: self._messagesReady.emit(fut, chat_id)
+        )
+
     # --- internals ------------------------------------------------------
     def apply_character(self, pipeline: Any, character: Any) -> None:
         """Called by SettingsBackend after the pipeline was rebuilt (spec §6.2)."""
@@ -166,6 +267,50 @@ class ChatBackend(QObject):
         if expression:
             self.expressionChanged.emit(expression)
         self._set_busy(False)
+
+    @Slot(object)
+    def _on_chats(self, fut: Future) -> None:
+        try:
+            chats = fut.result()
+        except Exception as exc:
+            self.errorRaised.emit(str(exc) or exc.__class__.__name__)
+            return
+        self.chatsListed.emit(
+            [
+                {
+                    "id": str(getattr(c, "id", "")),
+                    "preview": getattr(c, "preview", "") or "",
+                    "count": int(getattr(c, "message_count", 0) or 0),
+                    "updated": _format_timestamp(getattr(c, "updated_at", None)),
+                }
+                for c in chats
+            ]
+        )
+
+    @Slot(object, str)
+    def _on_messages(self, fut: Future, chat_id: str) -> None:
+        try:
+            messages = fut.result()
+        except Exception as exc:
+            self.errorRaised.emit(str(exc) or exc.__class__.__name__)
+            return
+        # Continue this conversation from now on.
+        from uuid import UUID
+
+        try:
+            self._chat_id = UUID(chat_id)
+        except (ValueError, TypeError):
+            self._chat_id = chat_id
+        transcript = [
+            {
+                "role": getattr(m, "role", "assistant").value
+                if hasattr(getattr(m, "role", None), "value")
+                else str(getattr(m, "role", "assistant")),
+                "text": getattr(m, "content", ""),
+            }
+            for m in messages
+        ]
+        self.chatLoaded.emit(chat_id, transcript)
 
 
 class SettingsBackend(QObject):
@@ -243,10 +388,9 @@ class SettingsBackend(QObject):
 
     @Slot(str, result="QVariantMap")
     def themeColors(self, theme_id: str):
-        theme = self._theme.themes.get(theme_id)
-        if theme is None:
-            return {}
-        return dict(theme["colors"])
+        # Route through the controller so optional tokens (e.g. ``text``) are
+        # backfilled for built-in/custom themes that predate them.
+        return self._theme.resolved_colors(theme_id)
 
     # --- character management ------------------------------------------
     @Property("QStringList", notify=charactersChanged)
@@ -294,6 +438,8 @@ class SettingsBackend(QObject):
                 greeting_message=str(data.get("greeting_message") or ""),
                 photo_emoji_map=photo,
                 initial_expression=str(data.get("initial_expression") or "default"),
+                temperature=_optional_float(data.get("temperature")),
+                max_tokens=_optional_int(data.get("max_tokens")),
             )
         except Exception as exc:
             self._chat.errorRaised.emit(str(exc) or exc.__class__.__name__)
@@ -341,6 +487,8 @@ class SettingsBackend(QObject):
             "personality": "",
             "greeting_message": "",
             "initial_expression": "default",
+            "temperature": "",
+            "max_tokens": "",
             "photo_emoji_map": {},
         }
 
@@ -373,11 +521,15 @@ class SettingsBackend(QObject):
         if c is None:
             return {}
         expr = getattr(c, "initial_expression", "neutral")
+        temperature = getattr(c, "temperature", None)
+        max_tokens = getattr(c, "max_tokens", None)
         return {
             "name": c.name,
             "personality": getattr(c, "personality", "") or "",
             "greeting_message": _character_greeting(c),
             "expression": expr,
+            "temperature": "" if temperature is None else temperature,
+            "max_tokens": "" if max_tokens is None else max_tokens,
             "custom": character_id not in self._built_in_ids,
             "thumb": _expression_url(c, expr, self._chat._pipeline),
         }

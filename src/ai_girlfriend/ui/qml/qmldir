@@ -1,4 +1,5 @@
 singleton Theme 1.0 Theme.qml
+singleton Backends 1.0 Backends.qml
 ChatView 1.0 ChatView.qml
 MessageBubble 1.0 MessageBubble.qml
 Portrait 1.0 Portrait.qml
@@ -7,3 +8,4 @@ ThemePicker 1.0 ThemePicker.qml
 ThemeEditor 1.0 ThemeEditor.qml
 CharacterPicker 1.0 CharacterPicker.qml
 CharacterEditor 1.0 CharacterEditor.qml
+ChatHistoryView 1.0 ChatHistoryView.qml

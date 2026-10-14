@@ -21,14 +21,14 @@ Page {
         spacing: 12
         topMargin: 16
         bottomMargin: 96
-        model: settingsBackend.themes
+        model: Backends.settings.themes
 
         delegate: Item {
             id: item
             width: list.width
             height: 88
-            readonly property var info: settingsBackend.themeInfo(modelData)
-            readonly property bool isActive: settingsBackend.currentTheme === modelData
+            readonly property var info: Backends.settings.themeInfo(modelData)
+            readonly property bool isActive: Backends.settings.currentTheme === modelData
 
             AbstractButton {
                 id: card
@@ -40,7 +40,7 @@ Page {
                 Accessible.role: Accessible.RadioButton
                 Accessible.name: item.info.name
                 Accessible.checked: item.isActive
-                onClicked: settingsBackend.selectTheme(modelData)
+                onClicked: Backends.settings.selectTheme(modelData)
 
                 background: Rectangle {
                     radius: Theme.radius

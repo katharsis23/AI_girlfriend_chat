@@ -28,7 +28,7 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             text: root.greeting
-            color: Theme.onSurface
+            color: Theme.text
             font.pixelSize: Theme.fontSizeL
         }
         Label {

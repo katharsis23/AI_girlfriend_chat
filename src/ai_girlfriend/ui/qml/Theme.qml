@@ -15,6 +15,12 @@ QtObject {
     readonly property color tertiary: c.tertiary
     readonly property color onSurface: c.onSurface
     readonly property color onSurfaceVariant: c.onSurfaceVariant
+    // Never resolve to a missing key: fall back to onSurface (and finally to a
+    // sensible default) so text is always readable on the active theme.
+    readonly property color text: (c.text !== undefined && c.text !== "")
+                                  ? c.text
+                                  : ((c.onSurface !== undefined && c.onSurface !== "")
+                                     ? c.onSurface : "#FFFFFF")
     readonly property color outline: c.outline
     readonly property color error: c.error
     readonly property color onError: c.onError

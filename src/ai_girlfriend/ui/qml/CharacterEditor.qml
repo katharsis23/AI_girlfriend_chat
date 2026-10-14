@@ -14,17 +14,34 @@ Page {
     property string draftPersonality: ""
     property string draftGreeting: ""
     property string draftExpression: "neutral"
+    property string draftTemperature: ""
+    property string draftMaxTokens: ""
     // expression id -> asset path
     property var draftPhotos: ({})
 
+    // Which path the image browser fills: "" (new row) or an expression id.
+    property string browseTarget: ""
+
+    function applyBrowsedFile(path) {
+        if (view.browseTarget === "") {
+            newExprPath.text = path
+        } else {
+            var p = Object.assign({}, view.draftPhotos)
+            p[view.browseTarget] = path
+            view.draftPhotos = p
+        }
+    }
+
     Component.onCompleted: {
         if (isEditing) {
-            var info = settingsBackend.characterInfo(characterId)
+            var info = Backends.settings.characterInfo(characterId)
             draftName = info.name
             draftPersonality = info.personality
             draftGreeting = info.greeting_message
             draftExpression = info.expression
-            draftPhotos = settingsBackend.characterPhotos(characterId)
+            draftTemperature = info.temperature !== "" ? String(info.temperature) : ""
+            draftMaxTokens = info.max_tokens !== "" ? String(info.max_tokens) : ""
+            draftPhotos = Backends.settings.characterPhotos(characterId)
         } else {
             draftPhotos = ({})
         }
@@ -88,6 +105,65 @@ Page {
                 onTextEdited: view.draftExpression = text
             }
 
+            // Response tuning: sampling temperature + approximate length.
+            Label {
+                text: qsTr("Response tuning")
+                color: Theme.onSurface
+                font.pixelSize: Theme.fontSizeM + 1
+                font.weight: Font.Medium
+                Layout.topMargin: 8
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 12
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Label {
+                        text: qsTr("Temperature")
+                        color: Theme.onSurfaceVariant
+                        font.pixelSize: Theme.fontSizeS + 1
+                    }
+                    TextField {
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("e.g. 0.8")
+                        text: view.draftTemperature
+                        color: Theme.onSurface
+                        inputMethodHints: Qt.ImhFormattedNumbersOnly
+                        validator: DoubleValidator { bottom: 0.0; top: 2.0; decimals: 2 }
+                        onTextEdited: view.draftTemperature = text
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Label {
+                        text: qsTr("Max length (tokens)")
+                        color: Theme.onSurfaceVariant
+                        font.pixelSize: Theme.fontSizeS + 1
+                    }
+                    TextField {
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("e.g. 512")
+                        text: view.draftMaxTokens
+                        color: Theme.onSurface
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        validator: IntValidator { bottom: 1; top: 100000 }
+                        onTextEdited: view.draftMaxTokens = text
+                    }
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Higher temperature = more creative; lower = more focused. " +
+                           "Leave empty to use the global default.")
+                color: Theme.onSurfaceVariant
+                wrapMode: Text.Wrap
+                font.pixelSize: Theme.fontSizeS
+            }
+
             // Expression image paths: id + absolute file path.
             Label {
                 text: qsTr("Expression images")
@@ -119,6 +195,16 @@ Page {
                         }
                     }
                     IconButton {
+                        glyph: "📂"
+                        fg: Theme.onSurfaceVariant
+                        accessibleName: qsTr("Browse for image")
+                        implicitWidth: 36; implicitHeight: 36
+                        onClicked: {
+                            view.browseTarget = modelData
+                            fileBrowser.open()
+                        }
+                    }
+                    IconButton {
                         glyph: "✕"
                         fg: Theme.onSurfaceVariant
                         accessibleName: qsTr("Remove expression")
@@ -145,7 +231,18 @@ Page {
                     id: newExprPath
                     Layout.fillWidth: true
                     placeholderText: qsTr("/path/to/image.png")
+
                     color: Theme.onSurface
+                }
+                IconButton {
+                    glyph: "📂"
+                    fg: Theme.onSurfaceVariant
+                    accessibleName: qsTr("Browse for image")
+                    implicitWidth: 40; implicitHeight: 40
+                    onClicked: {
+                        view.browseTarget = ""
+                        fileBrowser.open()
+                    }
                 }
                 Button {
                     text: qsTr("Add")
@@ -161,6 +258,12 @@ Page {
                 }
             }
         }
+    }
+
+    // In-app image browser (read-only filesystem backend exposed to QML).
+    FileBrowser {
+        id: fileBrowser
+        onFileSelected: function(path) { view.applyBrowsedFile(path) }
     }
 
     Rectangle {
@@ -179,12 +282,12 @@ Page {
             Button {
                 visible: view.isEditing
                 text: qsTr("Delete")
-                enabled: !settingsBackend.busy
+                enabled: !Backends.settings.busy
                 onClicked: {
-                    if (settingsBackend.deleteCharacter(view.characterId)) {
+                    if (Backends.settings.deleteCharacter(view.characterId)) {
                         view.StackView.view.pop()
                     } else {
-                        chatBackend.errorRaised(qsTr("Built-in characters cannot be deleted."))
+                        Backends.chat.errorRaised(qsTr("Built-in characters cannot be deleted."))
                     }
                 }
             }
@@ -192,7 +295,7 @@ Page {
             Button {
                 text: qsTr("Save")
                 highlighted: true
-                enabled: !settingsBackend.busy
+                enabled: !Backends.settings.busy
                 onClicked: {
                     var payload = {
                         "name": view.draftName,
@@ -200,14 +303,16 @@ Page {
                         "greeting_message": view.draftGreeting,
                         "initial_expression": view.draftExpression.length > 0
                                                 ? view.draftExpression : "neutral",
+                        "temperature": view.draftTemperature,
+                        "max_tokens": view.draftMaxTokens,
                         "photo_emoji_map": view.draftPhotos,
                         "original_id": view.characterId
                     }
-                    var id = settingsBackend.saveCharacter(payload)
+                    var id = Backends.settings.saveCharacter(payload)
                     if (id.length > 0) {
                         view.StackView.view.pop()
                     } else {
-                        chatBackend.errorRaised(qsTr("Invalid character: a name is required."))
+                        Backends.chat.errorRaised(qsTr("Invalid character: a name is required."))
                     }
                 }
             }

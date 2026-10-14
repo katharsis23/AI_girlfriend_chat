@@ -12,8 +12,8 @@ ApplicationWindow {
     height: 720
     minimumWidth: 360
     minimumHeight: 520
-    title: chatBackend.characterName.length > 0
-           ? qsTr("Companion — %1").arg(chatBackend.characterName)
+    title: Backends.chat.characterName.length > 0
+           ? qsTr("Companion — %1").arg(Backends.chat.characterName)
            : qsTr("Companion")
     color: Theme.background
 
@@ -21,7 +21,11 @@ ApplicationWindow {
     Material.accent: Theme.primary
     Material.primary: Theme.surface
     Material.background: Theme.background
-    Material.foreground: Theme.onSurface
+    // Foreground decides the default text color for *all* controls; bind every
+    // related role so nothing falls back to the style's default (black) text.
+    // `foreground` is the writable role that drives default control text color;
+    // the *TextColor roles are read-only reflections of it.
+    Material.foreground: Theme.text
 
     Behavior on color { ColorAnimation { duration: Theme.durationMedium } }
 
@@ -101,7 +105,7 @@ ApplicationWindow {
     }
 
     Connections {
-        target: chatBackend
+        target: Backends.chat
         function onErrorRaised(message) { snack.show(message) }
     }
 }

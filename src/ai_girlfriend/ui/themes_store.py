@@ -19,7 +19,12 @@ import json
 import re
 from pathlib import Path
 
-from src.ai_girlfriend.ui.themes import DEFAULT_THEME, REQUIRED_TOKENS, THEMES
+from src.ai_girlfriend.ui.themes import (
+    DEFAULT_THEME,
+    OPTIONAL_TOKEN_DEFAULTS,
+    REQUIRED_TOKENS,
+    THEMES,
+)
 
 _THEME_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
@@ -64,6 +69,10 @@ class ThemeStore:
         normalized: dict[str, str] = {}
         for token in REQUIRED_TOKENS:
             value = colors.get(token)
+            # A token added after a theme was saved may be missing: fill it from
+            # its sibling default instead of rejecting the whole theme.
+            if value is None and token in OPTIONAL_TOKEN_DEFAULTS:
+                value = colors.get(OPTIONAL_TOKEN_DEFAULTS[token])
             if not isinstance(value, str) or not _HEX_RE.match(value):
                 raise ThemeStoreError(f"Invalid color for {token!r}: {value!r}.")
             normalized[token] = value

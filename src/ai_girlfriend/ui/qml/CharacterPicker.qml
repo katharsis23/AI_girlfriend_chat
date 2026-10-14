@@ -21,27 +21,31 @@ Page {
         spacing: 12
         topMargin: 16
         bottomMargin: 16
-        model: settingsBackend.characters
+        model: Backends.settings.characters
 
         delegate: Item {
             id: item
             width: list.width
             height: 112
-            readonly property var info: settingsBackend.characterInfo(modelData)
-            readonly property bool isActive: settingsBackend.currentCharacter === modelData
+            readonly property var info: Backends.settings.characterInfo(modelData)
+            readonly property bool isActive: Backends.settings.currentCharacter === modelData
 
+            // The whole card is a single button (selects the character). The
+            // edit affordance is a *sibling* overlay (see below) so its click
+            // is never swallowed by this button's press/hover handling.
             AbstractButton {
+                id: card
                 width: Math.min(list.width - 32, 640)
                 height: parent.height
                 anchors.horizontalCenter: parent.horizontalCenter
                 padding: 16
                 hoverEnabled: true
-                enabled: !settingsBackend.busy
+                enabled: !Backends.settings.busy
                 Accessible.role: Accessible.RadioButton
                 Accessible.name: item.info.name
                 Accessible.description: item.info.personality
                 Accessible.checked: item.isActive
-                onClicked: settingsBackend.selectCharacter(modelData)
+                onClicked: Backends.settings.selectCharacter(modelData)
 
                 background: Rectangle {
                     radius: Theme.radius
@@ -72,25 +76,39 @@ Page {
                             font.pixelSize: Theme.fontSizeS + 1
                         }
                     }
-                    IconButton {
-                        glyph: "✎"
-                        fg: Theme.onSurfaceVariant
-                        enabled: !settingsBackend.busy
-                        accessibleName: qsTr("Edit character")
-                        implicitWidth: 36
-                        implicitHeight: 36
-                        onClicked: view.StackView.view.push(Qt.resolvedUrl("CharacterEditor.qml"),
-                                                            { characterId: modelData })
-                    }
-                    Rectangle {
-                        Layout.preferredWidth: 28; Layout.preferredHeight: 28
-                        radius: 14
-                        color: Theme.primary
-                        opacity: item.isActive ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: 150 } }
-                        Text { anchors.centerIn: parent; text: "✓"; color: Theme.onPrimary; font.pixelSize: 16; font.bold: true }
-                    }
+                    // Reserve room for the overlaid edit + check controls.
+                    Item { Layout.preferredWidth: 76; Layout.preferredHeight: 1 }
                 }
+            }
+
+            // Edit overlay, lifted above the card so clicks always land here.
+            IconButton {
+                id: editBtn
+                z: 2
+                glyph: "✎"
+                fg: Theme.onSurfaceVariant
+                enabled: !Backends.settings.busy
+                accessibleName: qsTr("Edit character")
+                implicitWidth: 40
+                implicitHeight: 40
+                anchors.right: card.right
+                anchors.rightMargin: 56
+                anchors.verticalCenter: card.verticalCenter
+                onClicked: view.StackView.view.push(Qt.resolvedUrl("CharacterEditor.qml"),
+                                                    { characterId: modelData })
+            }
+
+            // Active check badge (non-interactive overlay).
+            Rectangle {
+                z: 2
+                width: 28; height: 28; radius: 14
+                color: Theme.primary
+                opacity: item.isActive ? 1 : 0
+                anchors.right: card.right
+                anchors.rightMargin: 16
+                anchors.verticalCenter: card.verticalCenter
+                Behavior on opacity { NumberAnimation { duration: 150 } }
+                Text { anchors.centerIn: parent; text: "✓"; color: Theme.onPrimary; font.pixelSize: 16; font.bold: true }
             }
         }
     }
@@ -99,7 +117,7 @@ Page {
     Rectangle {
         anchors.fill: parent
         color: Theme.background
-        opacity: settingsBackend.busy ? 0.72 : 0
+        opacity: Backends.settings.busy ? 0.72 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: 150 } }
         MouseArea { anchors.fill: parent }   // swallow input
@@ -119,7 +137,7 @@ Page {
         Text { anchors.centerIn: parent; text: "+"; color: Theme.onPrimary; font.pixelSize: 30; font.bold: true }
         MouseArea {
             anchors.fill: parent
-            enabled: !settingsBackend.busy
+            enabled: !Backends.settings.busy
             onClicked: view.StackView.view.push(Qt.resolvedUrl("CharacterEditor.qml"))
         }
     }

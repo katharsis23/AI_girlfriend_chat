@@ -1,8 +1,13 @@
 import QtQuick
 import QtQuick.Controls
+import Qt5Compat.GraphicalEffects
 
-// Expression portrait with animated transitions (spec §1). Uses the character's image
-// asset when `source` is set, otherwise falls back to an emoji for the expression id.
+// Expression portrait with animated transitions (spec §1).
+//
+// Shows the character's image when `source` is set, otherwise an emoji for the
+// expression id. The photo is cropped into a circle with OpacityMask — the
+// classic Qt recipe (a round, layered mask + the image), which is simpler and
+// far more reliable than a hand-written ShaderEffect mask.
 Item {
     id: root
     property string expression: "neutral"
@@ -19,11 +24,13 @@ Item {
         "surprised": "😮", "angry": "😠", "love": "😍", "sleepy": "😴", "smile": "😊"
     })
 
+    readonly property bool hasImage: shownSource !== "" && photo.status === Image.Ready
+
     Accessible.role: Accessible.Graphic
     Accessible.name: qsTr("Portrait, expression: %1").arg(expression)
 
-    Component.onCompleted: { shown = expression; shownSource = source }
     onExpressionChanged: swap.restart()
+    onSourceChanged: swap.restart()
 
     SequentialAnimation {
         id: swap
@@ -38,10 +45,12 @@ Item {
         }
     }
 
-    // gentle "breathing" so the portrait never feels frozen
+    // Gentle "breathing" so the portrait never feels frozen.
     Item {
-        id: breath
-        anchors.fill: parent
+        id: face
+                anchors.fill: parent
+        transformOrigin: Item.Center
+
         SequentialAnimation on scale {
             running: root.visible && root.width > 120
             loops: Animation.Infinite
@@ -49,6 +58,7 @@ Item {
             NumberAnimation { to: 1.0; duration: 2400; easing.type: Easing.InOutSine }
         }
 
+        // Circle background + border behind the photo.
         Rectangle {
             id: halo
             anchors.fill: parent
@@ -60,63 +70,46 @@ Item {
             Behavior on border.color { ColorAnimation { duration: Theme.durationMedium } }
         }
 
-        Item {
-            id: face
+        // The photo, already sized to the inner circle.
+        Image {
+            id: photo
             anchors.fill: parent
-            transformOrigin: Item.Center
-
-            // Crop the photo into a circle: fill the whole avatar and cut off
-            // the overflow, clipped by a round mask so it reads as an avatar.
-            Item {
-                id: imageClip
-                anchors.fill: parent
-                anchors.margins: root.width * 0.08
-                visible: root.shownSource !== "" && image.status === Image.Ready
-                layer.enabled: true
-
-                // Round mask used by layer to clip the image to a circle.
-                Rectangle {
-                    id: circleMask
-                    anchors.fill: parent
-                    radius: width / 2
-                    color: "white"
-                    visible: false
-                    layer.enabled: true
-                }
-
-                Image {
-                    id: image
-                    anchors.fill: parent
+            anchors.margins: Math.max(2, root.width / 70) + root.width * 0.06
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                smooth: true
+                cache: true
+                visible: false
                     source: root.shownSource
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    smooth: true
-                    layer.enabled: true
-                    layer.samplerName: "source"
-                    layer.effect: ShaderEffect {
-                        property variant mask: ShaderEffectSource {
-                            sourceItem: circleMask
-                            hideSource: true
-                        }
-                        fragmentShader: "
-                            varying highp vec2 qt_TexCoord0;
-                            uniform lowp sampler2D source;
-                            uniform lowp sampler2D mask;
-                            uniform lowp float qt_Opacity;
-                            void main() {
-                                lowp vec4 tex = texture2D(source, qt_TexCoord0);
-                                lowp vec4 m = texture2D(mask, qt_TexCoord0);
-                                gl_FragColor = tex * m.a * qt_Opacity;
-                            }"
-                    }
-                }
+            sourceSize.width: Math.max(1, Math.round(width))
+            sourceSize.height: Math.max(1, Math.round(height))
             }
-            Text {
-                anchors.centerIn: parent
-                visible: root.shownSource === "" || root.shownSource === undefined
-                text: root.emojiMap[root.shown] !== undefined ? root.emojiMap[root.shown] : "🙂"
-                font.pixelSize: root.width * 0.46
+
+        // Round mask used to crop the photo. It must be rendered for the mask
+        // to have content, but we hide it with layer.enabled so only the crop
+        // is shown (the standard OpacityMask recipe).
+        Rectangle {
+            id: mask
+                anchors.fill: photo
+            radius: width / 2
+            color: "white"
+            visible: false
+            layer.enabled: true
             }
-        }
+
+        OpacityMask {
+            anchors.fill: photo
+            visible: root.hasImage
+            source: photo
+            maskSource: mask
+            }
+
+        // Emoji fallback when there is no usable image.
+        Text {
+            anchors.centerIn: parent
+            visible: !root.hasImage
+            text: root.emojiMap[root.shown] !== undefined ? root.emojiMap[root.shown] : "🙂"
+            font.pixelSize: root.width * 0.46
     }
+}
 }

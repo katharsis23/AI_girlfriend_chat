@@ -14,13 +14,14 @@ QT_MODULES = (
     "QtQuickControls2",
     "QtQuickLayouts",
 )
-QT_OPTIONAL_MODULES = ("QtMultimedia", "QtSvg")
+QT_OPTIONAL_MODULES = ("QtMultimedia", "QtSvg", "Qt5Compat")
 QML_PLUGINS = (
     "QtQuick",
     "QtQuick.Controls",
     "QtQuick.Layouts",
     "QtQuick.Window",
     "QtQml",
+    "Qt5Compat.GraphicalEffects",
 )
 
 
