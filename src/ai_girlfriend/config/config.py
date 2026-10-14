@@ -67,6 +67,28 @@ class Config(BaseSettings):
         description="Timeout in seconds for a single LLM request.",
     )
 
+    # Sampling defaults (can be overridden per character).
+    temperature: float = Field(
+        alias="TEMPERATURE",
+        default=0.8,
+        ge=0.0,
+        le=2.0,
+        description=(
+            "Default sampling temperature used when a character does not "
+            "specify its own (0 = deterministic, higher = more creative)."
+        ),
+    )
+
+    max_tokens: int = Field(
+        alias="MAX_TOKENS",
+        default=512,
+        gt=0,
+        description=(
+            "Default approximate cap on generated tokens when a character does "
+            "not specify its own."
+        ),
+    )
+
     # Database config
     database_provider: Literal["sqlite", "postgresql"] = Field(
         alias="DATABASE_PROVIDER",

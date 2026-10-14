@@ -20,10 +20,31 @@ class ExpressionManager:
         self.base_dir = Path(base_dir) if base_dir is not None else None
 
     def resolve(self, expression_id: str | None) -> str:
-        """Return a valid expression id, falling back to ``initial_expression``."""
-        if expression_id is not None and expression_id in self.character.expressions:
+        """Return a valid expression id.
+
+        Resolution order:
+
+        1. the requested id, if it is a known expression;
+        2. ``initial_expression``, if it is a known expression;
+        3. a ``default`` expression, if mapped;
+        4. any expression that has an asset;
+        5. ``initial_expression`` verbatim (or ``"default"``).
+
+        This guarantees a deterministic, always-usable fallback even when the
+        model hallucinates an unknown emotion or the character has an
+        incomplete expression map (see spec, section 6.1).
+        """
+        expressions = self.character.expressions
+        if expression_id is not None and expression_id in expressions:
             return expression_id
-        return self.character.initial_expression
+        initial = self.character.initial_expression
+        if initial in expressions:
+            return initial
+        if "default" in expressions:
+            return "default"
+        if expressions:
+            return next(iter(expressions))
+        return initial or "default"
 
     def validate(self, expression_id: str) -> None:
         """Raise ``InvalidExpressionError`` if the id is not known."""

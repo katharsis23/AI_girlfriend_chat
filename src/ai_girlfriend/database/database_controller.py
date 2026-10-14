@@ -38,6 +38,14 @@ class DatabaseController:
         """Return recent messages of a chat, oldest first."""
         return await self.provider.get_recent_messages(chat_id, limit)
 
+    async def list_chats(self, limit: int = 50):
+        """Return recent conversations, most recently updated first."""
+        return await self.provider.list_chats(limit)
+
+    async def get_messages(self, chat_id: UUID) -> list[Message]:
+        """Return the full message history of a chat, oldest first."""
+        return await self.provider.get_messages(chat_id)
+
     async def close(self) -> None:
         """Close the underlying provider."""
         await self.provider.close()

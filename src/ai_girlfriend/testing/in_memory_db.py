@@ -1,7 +1,9 @@
 """An in-memory ``IDatabaseStorage`` implementation for unit tests."""
 
+from datetime import datetime
 from uuid import UUID, uuid4
 
+from src.ai_girlfriend.models.database import ChatSummary
 from src.ai_girlfriend.models.llm import Message
 
 
@@ -38,6 +40,22 @@ class InMemoryDatabaseProvider:
     async def get_recent_messages(self, chat_id: UUID, limit: int) -> list[Message]:
         messages = self._messages.get(chat_id, [])
         return messages[-limit:]
+
+    async def list_chats(self, limit: int = 50) -> list[ChatSummary]:
+        summaries = [
+            ChatSummary(
+                id=chat_id,
+                updated_at=(messages[-1].created_at if messages else datetime.min),
+                message_count=len(messages),
+                preview=(messages[-1].content[:120] if messages else ""),
+            )
+            for chat_id, messages in self._messages.items()
+        ]
+        summaries.sort(key=lambda s: s.updated_at, reverse=True)
+        return summaries[:limit]
+
+    async def get_messages(self, chat_id: UUID) -> list[Message]:
+        return list(self._messages.get(chat_id, []))
 
     async def close(self) -> None:
         return None

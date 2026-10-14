@@ -38,9 +38,28 @@ class IDatabaseStorage(Protocol):
         """Return up to ``limit`` most recent messages of a chat, oldest first."""
         ...
 
+    async def list_chats(self, limit: int = 50) -> list["ChatSummary"]:
+        """Return recent conversations, most recently updated first."""
+        ...
+
+    async def get_messages(self, chat_id: UUID) -> list[Message]:
+        """Return the full message history of a chat, oldest first."""
+        ...
+
     async def close(self) -> None:
         """Release underlying resources."""
         ...
+
+
+class ChatSummary(BaseModel):
+    """A lightweight row describing a conversation for the history list."""
+
+    id: UUID = Field(description="UUID of the chat instance.")
+    updated_at: datetime = Field(description="The last edited time.")
+    message_count: int = Field(default=0, description="Number of stored messages.")
+    preview: str = Field(
+        default="", description="A short preview of the last message, for the list."
+    )
 
 
 class Chat(BaseModel):
@@ -55,4 +74,4 @@ class Chat(BaseModel):
     updated_at: datetime = Field(description="The last edited time.")
 
 
-__all__ = ["Chat", "IDatabaseStorage"]
+__all__ = ["Chat", "ChatSummary", "IDatabaseStorage"]

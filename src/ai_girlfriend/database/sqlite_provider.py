@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import aiosqlite
 
 from src.ai_girlfriend.exc import StorageError
+from src.ai_girlfriend.models.database import ChatSummary
 from src.ai_girlfriend.models.llm import Message, Role
 
 _SCHEMA = """
@@ -166,6 +167,69 @@ class SQLiteProvider:
             for row in rows
         ]
         return list(reversed(messages))
+
+    async def list_chats(self, limit: int = 50) -> list[ChatSummary]:
+        """Return recent conversations, most recently updated first."""
+        try:
+            cursor = await self.connection.execute(
+                """
+                SELECT
+                    c.id AS id,
+                    c.updated_at AS updated_at,
+                    (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id)
+                        AS message_count,
+                    (SELECT content FROM messages m
+                        WHERE m.chat_id = c.id
+                        ORDER BY m.created_at DESC, m.rowid DESC
+                        LIMIT 1) AS preview
+                FROM chats c
+                ORDER BY c.updated_at DESC
+                LIMIT ?;
+                """,
+                (limit,),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        except aiosqlite.Error as exc:
+            raise StorageError(f"Failed to list chats: {exc}") from exc
+
+        return [
+            ChatSummary(
+                id=UUID(row["id"]),
+                updated_at=_from_iso(row["updated_at"]),
+                message_count=row["message_count"] or 0,
+                preview=(row["preview"] or "")[:120],
+            )
+            for row in rows
+        ]
+
+    async def get_messages(self, chat_id: UUID) -> list[Message]:
+        """Return the full message history of a chat, oldest first."""
+        try:
+            cursor = await self.connection.execute(
+                """
+                SELECT id, chat_id, role, content, created_at
+                FROM messages
+                WHERE chat_id = ?
+                ORDER BY created_at ASC, rowid ASC;
+                """,
+                (str(chat_id),),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        except aiosqlite.Error as exc:
+            raise StorageError(f"Failed to read chat messages: {exc}") from exc
+
+        return [
+            Message(
+                id=UUID(row["id"]),
+                conversation_id=UUID(row["chat_id"]),
+                role=Role(row["role"]),
+                content=row["content"],
+                created_at=_from_iso(row["created_at"]),
+            )
+            for row in rows
+        ]
 
     async def close(self) -> None:
         """Close the underlying connection."""

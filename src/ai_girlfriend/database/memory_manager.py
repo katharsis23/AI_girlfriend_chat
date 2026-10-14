@@ -44,5 +44,13 @@ class MemoryManager:
         """Persist the user and assistant messages in a single transaction."""
         await self.database.save_exchange(user_message, bot_message)
 
+    async def list_chats(self, limit: int = 50):
+        """List recent conversations for the history view."""
+        return await self.database.list_chats(limit)
+
+    async def get_messages(self, chat_id: UUID) -> list[Message]:
+        """Return the full stored history of a chat, oldest first."""
+        return await self.database.get_messages(chat_id)
+
 
 __all__ = ["MemoryManager"]

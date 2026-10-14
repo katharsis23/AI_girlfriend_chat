@@ -59,12 +59,15 @@ class CompositionRoot:
         # 4. character
         expression_manager = ExpressionManager(character, base_dir=Path("."))
 
-        # 5. facade
+        # 5. facade (sampling defaults come from the global config; the
+        #    character may override them per profile).
         return GfPipeline(
             gf_config=character,
             ai_controller=ai_controller,
             memory_manager=memory_manager,
             expression_manager=expression_manager,
+            default_temperature=self.config.temperature,
+            default_max_tokens=self.config.max_tokens,
         )
 
     def _select_character(self) -> CharacterInfo:

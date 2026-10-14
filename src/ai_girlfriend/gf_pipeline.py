@@ -7,6 +7,7 @@ HTTP, and no GUI logic (see spec, sections 2 and 8).
 
 import json
 from collections.abc import AsyncIterator
+from typing import Any
 from uuid import UUID, uuid4
 
 from src.ai_girlfriend.character.expression_manager import ExpressionManager
@@ -27,11 +28,15 @@ class GfPipeline:
         ai_controller: AIController,
         memory_manager: MemoryManager,
         expression_manager: ExpressionManager,
+        default_temperature: float | None = None,
+        default_max_tokens: int | None = None,
     ):
         self.gf_config = gf_config
         self.ai_controller = ai_controller
         self.memory_manager = memory_manager
         self.expression_manager = expression_manager
+        self.default_temperature = default_temperature
+        self.default_max_tokens = default_max_tokens
         self._initialized = False
 
     async def init(self) -> None:
@@ -42,6 +47,20 @@ class GfPipeline:
         self._initialized = True
 
     # -- request building -------------------------------------------------
+
+    def _generation_params(self) -> dict[str, Any]:
+        """Sampling params: the character's own overrides beat the defaults.
+
+        Falls back to the pipeline defaults (which come from the global
+        ``Config``) and translates the token cap to the provider's key name
+        (``num_predict`` for Ollama, ``max_tokens`` for OpenAI-compatible APIs).
+        """
+        provider = getattr(self.ai_controller.provider, "provider", "") or "ollama"
+        return self.gf_config.generation_params(
+            temperature=self.default_temperature,
+            max_tokens=self.default_max_tokens,
+            provider=provider,
+        )
 
     def _build_request(self, context_messages: list[Message]) -> GenerationRequest:
         system_message = Message(
@@ -54,6 +73,7 @@ class GfPipeline:
         return GenerationRequest(
             messages=[system_message, *context_messages],
             model=getattr(self.ai_controller.provider, "model", ""),
+            params=self._generation_params(),
             metadata={"character_id": self.gf_config.character_id},
         )
 
@@ -61,8 +81,10 @@ class GfPipeline:
     def _parse_response(raw: str) -> tuple[str, str | None]:
         """Extract ``(text, expression)`` from the model's structured output.
 
-        If parsing fails, the raw text is used and the expression is left to
-        fall back to ``initial_expression`` (see spec, section 6.1).
+        The prompt asks for ``{"text": ..., "emotion": ...}`` but the legacy
+        ``expression`` key is accepted too, so older clients keep working. If
+        parsing fails, the raw text is used and the expression is left to fall
+        back to ``initial_expression`` (see spec, section 6.1).
         """
         try:
             data = json.loads(raw)
@@ -73,7 +95,7 @@ class GfPipeline:
         text = data.get("text")
         if not isinstance(text, str):
             return raw, None
-        expression = data.get("expression")
+        expression = data.get("emotion", data.get("expression"))
         return text, expression if isinstance(expression, str) else None
 
     # -- public API -------------------------------------------------------
@@ -153,6 +175,20 @@ class GfPipeline:
         if chat_id is not None:
             return chat_id
         return await self.memory_manager.create_chat()
+
+    # -- history (read-only views for the UI) -----------------------------
+
+    async def list_chats(self, limit: int = 50):
+        """List recent conversations (newest first) for the history view."""
+        if not self._initialized:
+            await self.init()
+        return await self.memory_manager.list_chats(limit)
+
+    async def get_messages(self, chat_id: UUID) -> list[Message]:
+        """Return the full stored history of a chat, oldest first."""
+        if not self._initialized:
+            await self.init()
+        return await self.memory_manager.get_messages(chat_id)
 
     async def close(self) -> None:
         """Release resources held by the pipeline."""
